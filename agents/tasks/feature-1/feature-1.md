@@ -80,6 +80,39 @@ This is the same pattern used to scale AI coding agents across hundreds of skill
 
 For most courses, this foundational stack — LLM + system prompt + trigger-loaded skills + general filesystem tools — is **all you need**. RAG, vector databases, knowledge graphs, and learning memory are available when the use case demands it (large content libraries, adaptive learning, research programs), but they're not prerequisites. The foundation handles the 80% case. The advanced infrastructure is there for the 20% that needs it.
 
+### Multi-User Concurrency: Session-Per-User Model
+
+Each user interaction spawns its own independent agent session — the same way a developer can open multiple Claude Code terminals, each with their own conversation but reading the same project files.
+
+```
+Student A (Discord DM) ──→ Agent session A ──┐
+Student B (Discord DM) ──→ Agent session B ──┤── same course content dir
+Student C (Canvas LTI) ──→ Agent session C ──┤   same skills & system prompt
+Student D (QR → Discord) → Agent session D ──┘   same model backend
+                                                  ↓
+                                             OpenRouter / Groq (free)
+```
+
+Each session:
+- Has its own context window (conversations are isolated per user)
+- Points at the same course content directory (read-only, shared)
+- Uses the same skills and system prompt (configured by instructor)
+- Runs independently and concurrently — no blocking, no queue
+- Can be resumed if the student comes back later (session continuity)
+
+The Discord bot or Canvas LTI frontend is just an **interface layer** — it maps incoming messages to agent sessions and pipes responses back. The agent runtime handles the actual conversation, tool use, and content retrieval.
+
+**Implementation options for session management:**
+
+| Approach | How It Works | Concurrency |
+|----------|-------------|-------------|
+| `claude` CLI in subprocess/pipe mode | Discord bot spawns `claude` process per user, pipes messages in/out | One process per active user |
+| Anthropic Agent SDK | Programmatic Python/TypeScript — each message creates an agent call | Async, many concurrent |
+| Custom tool-calling loop + Groq API | Lightweight Python — each message is an independent API call with tools | Fully concurrent, minimal overhead |
+| SimpleMCP-backed agent | SimpleMCP kits provide tools, any LLM handles the conversation | Depends on LLM backend |
+
+All approaches share the same principle: **the course content and skills are shared, the conversations are isolated.** This is how the bot can be always-on and serve unlimited concurrent users — each user is just another lightweight session reading the same files.
+
 ### Architecture Tiers
 
 The platform supports multiple architecture approaches — from zero-cost quick start to fully custom builds. These are not mutually exclusive; an institution can start with Tier 1 and graduate to Tier 3 as needs grow.
