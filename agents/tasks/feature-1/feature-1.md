@@ -128,6 +128,55 @@ Each course gets its own isolated agent instance. An instructor sets up the agen
 
 **Out of scope (for now)**: Writing/submitting on behalf of students, grade predictions, real-time lecture transcription, tutoring for course subject matter beyond what's in the materials.
 
+### Knowledge Organization: Entity Ecosystem (Opt-In Complexity)
+
+The platform can optionally use an **entity-based knowledge organization system** — the same pattern used to manage large-scale AI coding projects. Each course becomes an entity with structured knowledge, rules, skills, and context. The system is opt-in at every level — a course only takes on complexity when it needs it.
+
+#### Level 1: Just Files
+A directory of markdown files. The agent reads and searches them. No structure needed beyond filenames.
+```
+courses/cse290r/
+  syllabus.md
+  assignments/lab-1.md
+  announcements/welcome.md
+```
+
+#### Level 2: Entity Structure
+The course becomes a proper entity with organized knowledge, rules, and skills. Instructors or TAs can write skills in markdown. Knowledge is categorized.
+```
+courses/cse290r/
+  0AGNOSTIC.md                        ← source of truth
+  .0agnostic/
+    01_knowledge/                     ← syllabus, policies, FAQs
+    02_rules/                         ← "don't answer about grades directly"
+    05_handoff_documents/             ← TA shift notes, section handoffs
+    06_context_avenue_web/
+      01_file_based/
+        05_skills/                    ← /deadline-check, /find-rubric
+```
+
+#### Level 3: Full Entity Ecosystem
+Layers, stages, propagation chains, trigger pointers, UUID-based referencing, context chaining, memory systems. Supports multi-section courses, TA delegation, semester-over-semester evolution.
+```
+courses/cse290r/
+  0AGNOSTIC.md
+  .0agnostic/
+    01_knowledge/
+    02_rules/
+    03_protocols/                     ← grading workflows, office hours protocols
+    04_episodic_memory/               ← session history across semesters
+    05_handoff_documents/             ← cross-section, cross-semester
+  layer_1_group/
+    layer_1_modules/                  ← child entities per module/unit
+      module_01_intro/
+      module_02_features/
+```
+
+#### Level 4: Knowledge Infrastructure
+RAG with vector databases (pgvector), knowledge graphs with typed relationships, learning memory with mastery tracking, evidence-graded research outputs. For adaptive learning, research courses, or institution-wide deployments.
+
+Each level includes everything below it. Moving up is additive — just add directories and files. The agent's general tools (filesystem, search, terminal) work the same at every level. The entity ecosystem was originally built for coding agents (Claude Code, Codex, Cursor Agent, Gemini CLI), but because it's just files and directories, any agent with filesystem access can use it — including LangChain, custom Python loops, or any system that can read files.
+
 ### Future Direction: Hierarchical Agent System
 
 A natural evolution is a **school-level agent** that sits above course agents:
