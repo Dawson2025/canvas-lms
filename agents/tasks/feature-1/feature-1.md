@@ -47,3 +47,14 @@ Each course gets its own isolated agent instance. An instructor sets up the agen
 **In scope**: Read-only course content Q&A, deadline queries, material navigation, Discord bot (DM pattern), QR code linking to Discord bot, per-course enable/disable, dual-channel access via standalone backend.
 
 **Out of scope (for now)**: Writing/submitting on behalf of students, grade predictions, cross-course queries, real-time lecture transcription, tutoring for course subject matter beyond what's in the materials.
+
+### Future Direction: Hierarchical Agent System
+
+A natural evolution is a **school-level agent** that sits above course agents:
+
+- Students ask cross-cutting questions: "What's due across all my classes this week?" → school agent fans out to each enrolled course agent, aggregates results
+- Instructors or advisors get a department-level view: "Which students are falling behind across my courses?"
+- The school agent doesn't duplicate course content — it delegates to course agents and synthesizes
+- Mirrors the Canvas hierarchy: institution → account → course
+
+This is explicitly **not** part of the current feature scope, but the per-course isolation design is built to support it later — each course agent already has a clean API boundary that a parent agent can orchestrate.
