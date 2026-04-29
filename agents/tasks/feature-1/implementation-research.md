@@ -1,6 +1,6 @@
-# Implementation Research: Canvas Course Agent
+# Implementation Research: Canvas Course AI Platform
 
-> **Feature brief**: See [`feature-1.md`](./feature-1.md) — an AI-powered course assistant embedded in Canvas courses via LTI, providing read-only Q&A over published course content with dual-channel access (Canvas LTI + Discord bot). QR codes link directly to the Discord bot DM.
+> **Feature brief**: See [`feature-1.md`](./feature-1.md) — a platform for easily adding AI capabilities to any Canvas course. General-purpose tools (filesystem, terminal, search) + skills + optional MCP tools. Dual-channel access (Canvas LTI + Discord bot). Multiple model backends including free options (OpenRouter, Groq, Gemini). Extensible beyond course content.
 
 ---
 
@@ -14,34 +14,75 @@
 4. **QR code access**: Instructor generates a QR code that links directly to the Discord bot's DM (e.g., `discord.com/users/BOT_ID`). Students scan on phone → opens Discord → DMs the bot. No separate web app needed.
 5. **Discord access**: Students DM the bot directly (like Slack's "Sandbot" pattern — DM a bot to interact). The bot routes queries to the same agent backend. For course-specific context, students use a slash command (`/course CSE290R`) or the bot infers from a linked Discord server.
 
-### Dual-Channel Architecture
+### Platform Architecture: General Tools + Skills + CLIs
 
-The agent backend is a **standalone service** — Canvas and Discord are both frontends:
+The agent uses **general-purpose tools** — not custom-built tools for each action. This is the same pattern that makes Claude Code powerful: filesystem + terminal + search, and the agent learns to use existing CLIs and content.
 
 ```
 ┌─────────────┐  ┌──────────────┐
 │ Canvas LTI  │  │ Discord Bot  │ ← QR code points here
-│ (iframe)    │  │ (DM / slash) │
+│ (iframe)    │  │ (DM / chat)  │
 └──────┬──────┘  └──────┬───────┘
        │                │
        └────────┬───────┘
                 │
-        ┌───────▼────────┐
-        │  Agent Backend │ ← Standalone API service
-        │  (RAG + LLM)  │
-        └───────┬────────┘
+  ┌─────────────▼──────────────┐
+  │       Agent Runtime        │
+  │  (Claude Code architecture)│
+  ├────────────────────────────┤
+  │  General tools:            │
+  │  • read_file / list_dir    │
+  │  • search_files (grep)     │
+  │  • run_command (bash)      │
+  ├────────────────────────────┤
+  │  Skills (.md files):       │
+  │  • /deadline-check         │
+  │  • /policy-search          │
+  │  • /find-assignment        │
+  ├────────────────────────────┤
+  │  MCP tools (optional):     │
+  │  • SimpleMCP kits          │
+  │  • Canvas API server       │
+  │  • Custom integrations     │
+  ├────────────────────────────┤
+  │  Model backend (swappable):│
+  │  • OpenRouter (free)       │
+  │  • Groq (free)             │
+  │  • Gemini (free)           │
+  │  • Claude (paid, best)     │
+  │  • Ollama (self-hosted)    │
+  └─────────────┬──────────────┘
                 │
-        ┌───────▼────────┐
-        │  Canvas API    │ ← Content source
-        │  (read-only)   │
-        └────────────────┘
+  ┌─────────────▼──────────────┐
+  │  Course Content Directory  │
+  │  /courses/cse290r/         │
+  │  ├── syllabus.md           │
+  │  ├── grading_policy.md     │
+  │  ├── assignments/*.md      │
+  │  ├── modules/*.md          │
+  │  ├── announcements/*.md    │
+  │  ├── skills/*.md           │ ← instructor-written
+  │  └── extra/                │ ← beyond-course content
+  │      ├── club_resources.md │
+  │      └── study_guides/     │
+  └────────────────────────────┘
 ```
 
-**Per-course isolation**: Each course gets its own agent instance. The backend stores a separate content index per `course_id`. The Discord bot is scoped per server/channel — an instructor links their Discord server to their course, and the bot only responds with that course's content in that server. Students cannot query another course's agent. Canvas LTI enforces this via enrollment checks; Discord enforces it via server membership.
+**General tools, not custom tools**: The agent reads files, searches content, and runs commands — the same tools for every course. No per-course tool development. A new course just means a new content directory.
 
-**Instructor self-service**: Instructors set up their own agent — no admin intervention needed. They enable the LTI tool in their course, optionally link a Discord server, and the backend indexes their course content automatically. Each instructor controls their own agent's scope and settings.
+**Skills over custom code**: Instead of building tool integrations, instructors (or TAs) write skills in markdown — plain-language instructions that teach the agent course-specific patterns. Like "when a student asks about deadlines, read `assignments/*.md` and filter by date."
 
-**Why Discord DM (not a custom web app)**: Students already have Discord on their phones. No new app to install, no new login, no frontend to build or host. The QR code is just a link to the bot's DM or the course Discord server. This is the same pattern as Slack workspace bots (e.g., Sandbot) where you DM the bot directly for help.
+**CLIs over APIs**: Where possible, the agent uses existing CLIs (Canvas CLI, SimpleMCP, grep) rather than custom API integrations. This means new capabilities can be added by installing a CLI, not by writing code.
+
+**Model-agnostic**: The model backend is a configuration choice, not an architecture decision. Free models via OpenRouter work out of the box. Institutions that want higher quality can swap to Claude or GPT. The tools, skills, and content are identical regardless of model.
+
+**Per-course isolation**: Each course gets its own content directory and agent instance. The Discord bot is scoped per server/channel. Students cannot query another course's agent. Canvas LTI enforces this via enrollment checks; Discord enforces it via server membership.
+
+**Extensible beyond the course**: The content directory can include anything — not just Canvas content. Club resources, external documentation, study materials, conference links. The agent can answer questions about things related to the course that aren't in Canvas.
+
+**Instructor self-service**: Instructors set up their own agent — no admin intervention needed. They enable the LTI tool in their course, optionally link a Discord server, and content syncs automatically. Each instructor controls their own agent's scope, skills, and model backend.
+
+**Why Discord DM (not a custom web app)**: Students already have Discord on their phones. No new app to install, no new login, no frontend to build or host. The QR code is just a link to the bot's DM or the course Discord server. Same pattern as Slack workspace bots (e.g., Sandbot).
 
 ### Data Boundaries
 
