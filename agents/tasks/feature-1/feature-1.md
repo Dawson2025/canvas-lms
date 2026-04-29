@@ -39,6 +39,47 @@ The agent doesn't use custom-built tools for each action. Instead, it has **gene
 
 This means **no custom code per course**. An instructor enables the platform, content syncs, and the agent works immediately using general tools to read and search the course files.
 
+### Core Design Principle: Complexity on Demand
+
+The platform starts simple and scales without rewriting. At minimum, you need:
+- An LLM (free via OpenRouter/Groq)
+- A system prompt
+- Dynamic context that loads on demand (skills — markdown files with YAML frontmatter)
+- A few general-purpose MCP tools (filesystem, terminal)
+
+Skills teach the agent how to use CLIs and tools — keeping the actual MCP tool count minimal while enabling the agent to do anything those CLIs can do.
+
+#### The Noise Problem and Trigger Hierarchy
+
+As you scale up — more skills, more MCP tools, more context avenues — each one adds to the agent's static context. Every listing competes for attention. With 50 skills loaded at once, the agent doesn't know which to reach for. More MCP servers, more tools, more listings = more noise = worse performance.
+
+**Solution: Hierarchical trigger loading.** The system prompt contains only **minimal top-level triggers** — short pattern-matching rules that recognize categories of queries. When a trigger fires, it loads the specific skill/context for that category, which may contain its own sub-triggers. Context expands on demand, not upfront.
+
+```
+STATIC CONTEXT (always loaded — kept minimal):
+  System prompt + identity
+  Top-level triggers:
+    "deadlines/due dates"  → load /deadline-check
+    "policies/rules"       → load /policy-search
+    "assignments/labs"     → load /assignment-lookup
+    "course structure"     → load /module-nav
+
+DYNAMIC CONTEXT (loaded per-trigger, then released):
+  /deadline-check skill:
+    Reads assignments/*.md, filters by date
+    Sub-trigger: "late submission?" → loads grading_policy.md
+
+  /policy-search skill:
+    Reads syllabus.md, grading_policy.md
+    Sub-trigger: "grade dispute?" → loads appeals_process.md
+```
+
+A student asking "What's due this week?" loads only the deadline skill — not the grading policy, not the admin settings, not every other skill. Clean context, focused retrieval, no noise.
+
+This is the same pattern used to scale AI coding agents across hundreds of skills and tools — and it applies directly to course agents.
+
+For most courses, this foundational stack — LLM + system prompt + trigger-loaded skills + general filesystem tools — is **all you need**. RAG, vector databases, knowledge graphs, and learning memory are available when the use case demands it (large content libraries, adaptive learning, research programs), but they're not prerequisites. The foundation handles the 80% case. The advanced infrastructure is there for the 20% that needs it.
+
 ### Architecture Tiers
 
 The platform supports multiple architecture approaches — from zero-cost quick start to fully custom builds. These are not mutually exclusive; an institution can start with Tier 1 and graduate to Tier 3 as needs grow.
