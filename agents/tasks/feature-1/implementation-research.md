@@ -1,6 +1,6 @@
 # Implementation Research: Canvas Course Agent
 
-> **Feature brief**: See [`feature-1.md`](./feature-1.md) — an AI-powered course assistant embedded in Canvas courses via LTI, providing read-only Q&A over published course content with multi-channel access (Canvas, Discord, QR code web app).
+> **Feature brief**: See [`feature-1.md`](./feature-1.md) — an AI-powered course assistant embedded in Canvas courses via LTI, providing read-only Q&A over published course content with dual-channel access (Canvas LTI + Discord bot). QR codes link directly to the Discord bot DM.
 
 ---
 
@@ -11,33 +11,35 @@
 1. **Instructor enables agent**: Course Settings → Navigation → drag "Course Agent" to active items (standard Canvas external tool enable flow via `ContextExternalTool` placements).
 2. **Student opens agent**: Clicks "Course Agent" in course sidebar → chat interface loads in the Canvas content area via LTI launch.
 3. **Student asks question**: Types natural language query → agent retrieves relevant course content via Canvas API → returns answer with source links.
-4. **QR code access**: Instructor generates a QR code from agent settings → students scan on phone → opens mobile-optimized chat (authenticated via Canvas session or LTI deep link).
-5. **Discord access**: Students in a course Discord server interact with a bot that routes queries to the same agent backend. The bot maps Discord users to Canvas enrollments via a one-time linking step.
+4. **QR code access**: Instructor generates a QR code that links directly to the Discord bot's DM (e.g., `discord.com/users/BOT_ID`). Students scan on phone → opens Discord → DMs the bot. No separate web app needed.
+5. **Discord access**: Students DM the bot directly (like Slack's "Sandbot" pattern — DM a bot to interact). The bot routes queries to the same agent backend. For course-specific context, students use a slash command (`/course CSE290R`) or the bot infers from a linked Discord server.
 
-### Multi-Channel Architecture
+### Dual-Channel Architecture
 
-The agent backend is a **standalone service** — Canvas, Discord, and the QR code web app are all frontends:
+The agent backend is a **standalone service** — Canvas and Discord are both frontends:
 
 ```
-┌─────────────┐  ┌──────────────┐  ┌──────────────┐
-│ Canvas LTI  │  │ Discord Bot  │  │ QR Web App   │
-│ (iframe)    │  │ (slash cmds) │  │ (mobile)     │
-└──────┬──────┘  └──────┬───────┘  └──────┬───────┘
-       │                │                  │
-       └────────────────┼──────────────────┘
-                        │
-                ┌───────▼────────┐
-                │  Agent Backend │ ← Standalone API service
-                │  (RAG + LLM)  │
-                └───────┬────────┘
-                        │
-                ┌───────▼────────┐
-                │  Canvas API    │ ← Content source
-                │  (read-only)   │
-                └────────────────┘
+┌─────────────┐  ┌──────────────┐
+│ Canvas LTI  │  │ Discord Bot  │ ← QR code points here
+│ (iframe)    │  │ (DM / slash) │
+└──────┬──────┘  └──────┬───────┘
+       │                │
+       └────────┬───────┘
+                │
+        ┌───────▼────────┐
+        │  Agent Backend │ ← Standalone API service
+        │  (RAG + LLM)  │
+        └───────┬────────┘
+                │
+        ┌───────▼────────┐
+        │  Canvas API    │ ← Content source
+        │  (read-only)   │
+        └────────────────┘
 ```
 
-**Why standalone**: Each frontend authenticates users differently (LTI JWT, Discord OAuth, Canvas session), but they all query the same agent backend with `(course_id, user_id, query)`. Content indexing happens once per course, shared across all channels. This means the AI Society Discord bot and the Canvas course agent share the same knowledge base.
+**Why this works**: Canvas LTI handles in-browser students. Discord bot handles mobile/casual access (scan QR → DM the bot). Both query the same backend with `(course_id, query)`. Content indexing happens once per course, shared across both channels. The AI Society Discord bot and the Canvas course agent share the same knowledge base — no duplication.
+
+**Why Discord DM (not a custom web app)**: Students already have Discord on their phones. No new app to install, no new login, no frontend to build or host. The QR code is just a link to the bot's DM. This is the same pattern as Slack workspace bots (e.g., Sandbot) where you DM the bot directly for help.
 
 ### Data Boundaries
 
@@ -98,7 +100,7 @@ The following should be tracked in GitHub Projects for Lab 4 automation:
 | FR-3 | **Given** a student asks about the late submission policy, **when** the agent processes the query, **then** it returns the relevant excerpt from the course syllabus with a link to the full syllabus page. | Verify cited text exists in syllabus; verify link resolves. |
 | FR-4 | **Given** an instructor, **when** they access Course Agent settings, **then** they can enable/disable the agent, set a custom welcome message, and choose which content types the agent indexes (syllabus, assignments, modules, files, pages). | Settings save and persist; toggling disable removes the nav item for students. |
 | FR-5 | **Given** any user, **when** they ask a question the agent cannot answer from course content, **then** the agent responds with "I don't have information about that in this course's materials" rather than fabricating an answer. | Ask out-of-scope questions; verify no hallucinated content. |
-| FR-6 | **Given** an instructor, **when** they click "Generate QR Code", **then** a QR code image is displayed that encodes a URL to the mobile-optimized agent chat for that course, requiring Canvas authentication. | Scan QR code on phone; verify it opens agent chat after Canvas login. |
+| FR-6 | **Given** an instructor, **when** they click "Generate QR Code", **then** a QR code image is displayed that encodes a Discord DM link to the course agent bot, pre-configured with the course context. | Scan QR code on phone; verify it opens Discord and starts a DM with the bot. |
 | FR-7 | **Given** a student not enrolled in the course, **when** they attempt to access the agent via direct URL or QR code, **then** they receive a "Not authorized" message. | Test with unenrolled user; verify 403 response. |
 
 ### Out of Scope
@@ -250,7 +252,7 @@ Key findings from index:
 | Ask questions about every content type | Agent handles syllabus, assignment, module, file, page, announcement queries | Student |
 | Ask off-topic questions | Agent declines gracefully; no hallucination | Student |
 | Disable agent mid-semester | Nav item disappears; existing sessions end cleanly | Instructor |
-| Access via QR code on mobile | Chat loads after Canvas auth; responsive layout; usable on small screen | Student |
+| Access via QR code on mobile | QR opens Discord; DM with bot works; bot responds with course context | Student |
 | Two students chatting simultaneously | No cross-contamination of sessions or responses | Student × 2 |
 | Course with no syllabus | Agent handles missing content gracefully | Student |
 | Instructor changes assignment after indexing | Agent reflects updated content on next query (or after re-index) | Instructor + Student |
@@ -264,7 +266,7 @@ Key findings from index:
 | FR-3 | Ask "What is the late policy?" in a course with syllabus containing late policy section | Response quotes syllabus text; link to syllabus resolves |
 | FR-4 | Toggle agent off as instructor; verify as student | Nav item gone; direct URL returns "Agent disabled for this course" |
 | FR-5 | Ask "What is the meaning of life?" | Response: "I don't have information about that in this course's materials" |
-| FR-6 | Generate and scan QR code | QR resolves to agent chat; requires Canvas login; mobile layout renders |
+| FR-6 | Generate and scan QR code | QR opens Discord DM with bot; bot responds with course welcome message |
 | FR-7 | Access agent URL while logged in as non-enrolled user | 403 "Not authorized" returned |
 
 ### Impractical to Automate

@@ -14,9 +14,9 @@ A **Course Agent** — an AI-powered course assistant accessible as a navigation
 - **Navigation help**: "Where do I find the rubric for Assignment 3?" → direct link
 - **Deadline awareness**: "What's due this week?" → filtered, prioritized list from course calendar
 - **Policy lookup**: "Can I submit late?" → pulls from syllabus grading policy section
-- **QR code access**: Generates a course-specific QR code so students can access the agent from their phone (useful during lectures, office hours, orientation)
-- **Discord integration**: A Discord bot connects to the same agent backend, so students in a course Discord server can ask questions without opening Canvas
-- **Multi-channel architecture**: The agent backend is a standalone service — Canvas (LTI), Discord (bot), and QR code (web app) are all frontends querying the same knowledge base
+- **Discord bot (DM pattern)**: Students DM the bot directly on Discord — like Slack's "Sandbot" pattern. No new app to install, students already have Discord on their phones
+- **QR code access**: Generates a QR code that links to the Discord bot's DM. Scan on phone during lecture → opens Discord → ask the bot about the course. No separate web app needed
+- **Dual-channel architecture**: The agent backend is a standalone service — Canvas (LTI) and Discord (bot DM) are both frontends querying the same knowledge base
 
 ### User Roles
 
@@ -35,6 +35,6 @@ A **Course Agent** — an AI-powered course assistant accessible as a navigation
 
 ## Scope
 
-**In scope**: Read-only course content Q&A, deadline queries, material navigation, QR code generation, Discord bot integration, per-course enable/disable, multi-channel access via standalone backend.
+**In scope**: Read-only course content Q&A, deadline queries, material navigation, Discord bot (DM pattern), QR code linking to Discord bot, per-course enable/disable, dual-channel access via standalone backend.
 
 **Out of scope (for now)**: Writing/submitting on behalf of students, grade predictions, cross-course queries, real-time lecture transcription, tutoring for course subject matter beyond what's in the materials.
