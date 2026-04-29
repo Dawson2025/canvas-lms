@@ -55,6 +55,7 @@ A natural evolution is a **school-level agent** that sits above course agents:
 - Students ask cross-cutting questions: "What's due across all my classes this week?" → school agent fans out to each enrolled course agent, aggregates results
 - Instructors or advisors get a department-level view: "Which students are falling behind across my courses?"
 - The school agent doesn't duplicate course content — it delegates to course agents and synthesizes
+- **Inter-class awareness**: Prerequisite checking ("Am I ready for CSE 450?"), workload balancing across classes ("I have exams in 3 classes next week — help me plan"), identifying overlapping content between classes, coordinating group projects that involve students from multiple sections
 - Mirrors the Canvas hierarchy: institution → account → course
 
 This is explicitly **not** part of the current feature scope, but the per-course isolation design is built to support it later — each course agent already has a clean API boundary that a parent agent can orchestrate.
