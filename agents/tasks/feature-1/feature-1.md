@@ -15,6 +15,8 @@ A **Course Agent** — an AI-powered course assistant accessible as a navigation
 - **Deadline awareness**: "What's due this week?" → filtered, prioritized list from course calendar
 - **Policy lookup**: "Can I submit late?" → pulls from syllabus grading policy section
 - **QR code access**: Generates a course-specific QR code so students can access the agent from their phone (useful during lectures, office hours, orientation)
+- **Discord integration**: A Discord bot connects to the same agent backend, so students in a course Discord server can ask questions without opening Canvas
+- **Multi-channel architecture**: The agent backend is a standalone service — Canvas (LTI), Discord (bot), and QR code (web app) are all frontends querying the same knowledge base
 
 ### User Roles
 
@@ -33,6 +35,6 @@ A **Course Agent** — an AI-powered course assistant accessible as a navigation
 
 ## Scope
 
-**In scope**: Read-only course content Q&A, deadline queries, material navigation, QR code generation, per-course enable/disable.
+**In scope**: Read-only course content Q&A, deadline queries, material navigation, QR code generation, Discord bot integration, per-course enable/disable, multi-channel access via standalone backend.
 
 **Out of scope (for now)**: Writing/submitting on behalf of students, grade predictions, cross-course queries, real-time lecture transcription, tutoring for course subject matter beyond what's in the materials.

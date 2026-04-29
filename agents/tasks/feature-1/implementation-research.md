@@ -1,6 +1,6 @@
 # Implementation Research: Canvas Course Agent
 
-> **Feature brief**: See [`feature-1.md`](./feature-1.md) — an AI-powered course assistant embedded in Canvas courses via LTI, providing read-only Q&A over published course content with QR code mobile access.
+> **Feature brief**: See [`feature-1.md`](./feature-1.md) — an AI-powered course assistant embedded in Canvas courses via LTI, providing read-only Q&A over published course content with multi-channel access (Canvas, Discord, QR code web app).
 
 ---
 
@@ -12,6 +12,32 @@
 2. **Student opens agent**: Clicks "Course Agent" in course sidebar → chat interface loads in the Canvas content area via LTI launch.
 3. **Student asks question**: Types natural language query → agent retrieves relevant course content via Canvas API → returns answer with source links.
 4. **QR code access**: Instructor generates a QR code from agent settings → students scan on phone → opens mobile-optimized chat (authenticated via Canvas session or LTI deep link).
+5. **Discord access**: Students in a course Discord server interact with a bot that routes queries to the same agent backend. The bot maps Discord users to Canvas enrollments via a one-time linking step.
+
+### Multi-Channel Architecture
+
+The agent backend is a **standalone service** — Canvas, Discord, and the QR code web app are all frontends:
+
+```
+┌─────────────┐  ┌──────────────┐  ┌──────────────┐
+│ Canvas LTI  │  │ Discord Bot  │  │ QR Web App   │
+│ (iframe)    │  │ (slash cmds) │  │ (mobile)     │
+└──────┬──────┘  └──────┬───────┘  └──────┬───────┘
+       │                │                  │
+       └────────────────┼──────────────────┘
+                        │
+                ┌───────▼────────┐
+                │  Agent Backend │ ← Standalone API service
+                │  (RAG + LLM)  │
+                └───────┬────────┘
+                        │
+                ┌───────▼────────┐
+                │  Canvas API    │ ← Content source
+                │  (read-only)   │
+                └────────────────┘
+```
+
+**Why standalone**: Each frontend authenticates users differently (LTI JWT, Discord OAuth, Canvas session), but they all query the same agent backend with `(course_id, user_id, query)`. Content indexing happens once per course, shared across all channels. This means the AI Society Discord bot and the Canvas course agent share the same knowledge base.
 
 ### Data Boundaries
 
