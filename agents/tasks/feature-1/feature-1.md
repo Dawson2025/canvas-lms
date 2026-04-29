@@ -113,6 +113,18 @@ The Discord bot or Canvas LTI frontend is just an **interface layer** — it map
 
 All approaches share the same principle: **the course content and skills are shared, the conversations are isolated.** This is how the bot can be always-on and serve unlimited concurrent users — each user is just another lightweight session reading the same files.
 
+### Hosting
+
+The agent needs a real machine with filesystem and terminal access (Claude Code can't run on serverless platforms like Cloudflare Workers or Vercel).
+
+| Phase | Where | Details |
+|-------|-------|---------|
+| **Prototyping** | Local machine | Develop and test locally, iterate fast |
+| **Deployment** | EC2 instance (already provisioned for CSE 290R) | Always-on, accessible from Discord and Canvas |
+| **Scale (future)** | Oracle Cloud free tier (4 ARM cores, 24GB RAM, forever free) or university hosting | For multi-course production deployments |
+
+The Discord bot runs as a persistent process on the host. Agent sessions are spawned on demand per user message. Course content lives on the same filesystem. No additional infrastructure required.
+
 ### Architecture Tiers
 
 The platform supports multiple architecture approaches — from zero-cost quick start to fully custom builds. These are not mutually exclusive; an institution can start with Tier 1 and graduate to Tier 3 as needs grow.
