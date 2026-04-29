@@ -18,13 +18,22 @@ A **Course Agent** — an AI-powered course assistant accessible as a navigation
 - **QR code access**: Generates a QR code that links to the Discord bot's DM. Scan on phone during lecture → opens Discord → ask the bot about the course. No separate web app needed
 - **Dual-channel architecture**: The agent backend is a standalone service — Canvas (LTI) and Discord (bot DM) are both frontends querying the same knowledge base
 
+### Per-Course Isolation
+
+Each course gets its own isolated agent instance. An instructor sets up the agent for their course — it only knows that course's content and only enrolled students can access it. There is no shared agent across courses.
+
+- Instructor for CSE 290R sets up an agent → it indexes only CSE 290R content
+- Instructor for MATH 341 sets up a separate agent → it indexes only MATH 341 content
+- A student enrolled in both sees two separate agents — never cross-contaminated
+- The Discord bot enforces this: each course gets its own Discord server (or channel), and the bot only responds with that course's content in that context
+
 ### User Roles
 
 | Role | Capabilities |
 |------|-------------|
-| Student | Chat with agent about enrolled courses; access via web or QR code |
-| Instructor | Enable/disable per course; configure agent persona and knowledge scope; view usage analytics |
-| Admin | Set institution-level defaults; manage API keys; control which courses can use the feature |
+| Student | Chat with agent for enrolled courses only; access via Canvas LTI or Discord bot DM; no access to other courses' agents |
+| Instructor | Set up their own course agent; configure content scope, welcome message, Discord server link; generate QR code; view usage analytics |
+| Admin | Set institution-level defaults; manage API keys; control which courses can enable the feature |
 
 ### Why Canvas (not a standalone tool)
 

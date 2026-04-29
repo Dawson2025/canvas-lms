@@ -37,9 +37,11 @@ The agent backend is a **standalone service** — Canvas and Discord are both fr
         └────────────────┘
 ```
 
-**Why this works**: Canvas LTI handles in-browser students. Discord bot handles mobile/casual access (scan QR → DM the bot). Both query the same backend with `(course_id, query)`. Content indexing happens once per course, shared across both channels. The AI Society Discord bot and the Canvas course agent share the same knowledge base — no duplication.
+**Per-course isolation**: Each course gets its own agent instance. The backend stores a separate content index per `course_id`. The Discord bot is scoped per server/channel — an instructor links their Discord server to their course, and the bot only responds with that course's content in that server. Students cannot query another course's agent. Canvas LTI enforces this via enrollment checks; Discord enforces it via server membership.
 
-**Why Discord DM (not a custom web app)**: Students already have Discord on their phones. No new app to install, no new login, no frontend to build or host. The QR code is just a link to the bot's DM. This is the same pattern as Slack workspace bots (e.g., Sandbot) where you DM the bot directly for help.
+**Instructor self-service**: Instructors set up their own agent — no admin intervention needed. They enable the LTI tool in their course, optionally link a Discord server, and the backend indexes their course content automatically. Each instructor controls their own agent's scope and settings.
+
+**Why Discord DM (not a custom web app)**: Students already have Discord on their phones. No new app to install, no new login, no frontend to build or host. The QR code is just a link to the bot's DM or the course Discord server. This is the same pattern as Slack workspace bots (e.g., Sandbot) where you DM the bot directly for help.
 
 ### Data Boundaries
 
