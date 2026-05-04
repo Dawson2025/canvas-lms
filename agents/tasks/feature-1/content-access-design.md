@@ -326,7 +326,252 @@ Canvas already has `AiExperience`, `AiConversation`, `AiExperienceContextFile` �
 
 ---
 
-## Part 8: Implementation Plan for Lab 3.2
+## Part 8: Schema Context Eliminates Speculation
+
+### The Key Insight: Schema Knowledge = Deterministic Queries
+
+An agent with the Canvas schema in its context doesn't guess — it composes the exact right query on the first try, the same way a developer who's read the schema docs would. The "speculative querying" problem only exists when the agent doesn't know the schema.
+
+```
+Without schema context:
+  "Where's the late policy?"
+  → Try assignments table? → 0 results
+  → Try wiki_pages? → 0 results
+  → Try syllabus_body? → found it! (3 round-trips, 2 wasted)
+
+With schema context (agent knows the table map):
+  "Where's the late policy?"
+  → Schema says: policies are in courses.syllabus_body or wiki_pages.body
+  → Query: SELECT syllabus_body FROM courses WHERE id = 407700
+  → Found it. (1 query, 0 waste)
+```
+
+This means the three components of the system are:
+
+1. **Schema context** (~100 lines of markdown) — loaded into agent context, teaches it WHERE content lives. Eliminates speculation entirely. The agent knows `assignments.description` has assignment content, `wiki_pages.body` has page content, `courses.syllabus_body` has the syllabus, and `content_tags` is the polymorphic join for modules.
+
+2. **HTML→markdown converter** — a function or CLI tool that strips Canvas HTML noise (inline styles, nested divs, CSS classes) and returns clean markdown. Can be a Rails helper, a Python script, or `pandoc`. Makes content READABLE for the agent instead of wasting tokens on CSS.
+
+3. **Index/manifest** (optional but valuable) — adds semantic summaries and keywords on TOP of schema knowledge. Schema tells the agent which TABLE to query; the manifest tells it which specific ITEM matches the user's question without fetching content. This is an optimization, not a requirement.
+
+### With vs Without the Manifest
+
+| Scenario | Schema Only | Schema + Manifest |
+|----------|------------|-------------------|
+| "What's the late policy?" | Knows to check syllabus_body + wiki_pages → 1-2 queries | Manifest says "syllabus.md — contains late work policy" → 1 fetch |
+| "What's due this week?" | `SELECT title, due_at FROM assignments WHERE context_id=407700 AND due_at BETWEEN...` → 1 query | Same query — manifest doesn't help here, schema is sufficient |
+| "What did we learn about recursion?" | `SELECT body FROM wiki_pages WHERE context_id=407700 AND body ILIKE '%recursion%'` → 1 query, but scans all pages | Manifest says "Module 3 covers recursion" → fetch only Module 3 content |
+| "Prerequisites for Module 7?" | `SELECT prerequisites FROM context_modules WHERE context_id=407700 AND name ILIKE '%7%'` → 1 query | Same — schema is sufficient for structural queries |
+
+**Bottom line**: Schema context alone handles 80% of queries deterministically. The manifest adds value for semantic matching ("which content is ABOUT this topic?") where keyword search might miss.
+
+---
+
+## Part 9: Fork Model — PostgreSQL Extensions on the Existing Database
+
+### Canvas Already Runs PostgreSQL
+
+This is the critical architectural advantage. Canvas's database is already PostgreSQL. Adding AI capabilities means enabling extensions on the SAME database — not deploying new infrastructure:
+
+```sql
+-- Enable on existing Canvas PostgreSQL instance:
+CREATE EXTENSION IF NOT EXISTS vector;     -- pgvector for semantic search
+CREATE EXTENSION IF NOT EXISTS age;        -- Apache AGE for knowledge graph
+
+-- Add embedding column to existing content tables:
+ALTER TABLE wiki_pages ADD COLUMN IF NOT EXISTS embedding vector(384);
+ALTER TABLE assignments ADD COLUMN IF NOT EXISTS embedding vector(384);
+ALTER TABLE discussion_topics ADD COLUMN IF NOT EXISTS embedding vector(384);
+
+-- Create knowledge graph on same database:
+SELECT create_graph('course_knowledge');
+```
+
+### What Each Extension Adds
+
+| Extension | What It Enables | Query Example |
+|-----------|----------------|---------------|
+| **pgvector** | Semantic search — "find content LIKE this query" | `SELECT title FROM wiki_pages ORDER BY embedding <=> query_vec LIMIT 5` |
+| **Apache AGE** | Knowledge graph — prerequisites, concept deps, learning paths | `MATCH (m:Module)-[:PREREQUISITE]->(p) WHERE m.name='Week 7' RETURN p` |
+
+### The Three-Layer Architecture (Fork)
+
+```
+Canvas PostgreSQL (already running — zero new infrastructure)
+│
+├── Layer 1: Relational tables (EXISTING)
+│   ├── courses, assignments, wiki_pages, content_tags, etc.
+│   ├── Agent queries these directly with schema knowledge
+│   └── Always fresh, always authoritative
+│
+├── Layer 2: pgvector embeddings (ADD EXTENSION + COLUMNS)
+│   ├── embedding vector(384) on content tables
+│   ├── Auto-embed on content save (Rails after_save callback)
+│   ├── Semantic search for "find content about X"
+│   └── Complements schema-based queries (keyword search) with meaning-based search
+│
+├── Layer 3: Apache AGE knowledge graph (ADD EXTENSION + GRAPH)
+│   ├── Nodes: modules, concepts, assignments, learning objectives
+│   ├── Edges: prerequisite, contains, teaches, relates_to
+│   ├── Auto-populate from ContextModule.prerequisites (Canvas metadata)
+│   ├── Agent-proposed concept relationships (instructor approves)
+│   └── Multi-hop traversal: "What do I need to know before Week 7?"
+│
+└── Utility: html_to_markdown() function (ADD FUNCTION)
+    ├── Strips Canvas HTML noise → clean markdown
+    ├── Called on read, not on write (content stays as HTML in DB)
+    └── Agent receives clean markdown, not HTML blobs
+```
+
+### Why This Is Better Than Separate Infrastructure
+
+| Factor | Separate DB (new pgvector + AGE instance) | Same Canvas PostgreSQL |
+|--------|-------------------------------------------|----------------------|
+| Deployment | New server, new backups, new ops | Already running |
+| Data freshness | Must sync from Canvas DB | IS the Canvas DB |
+| Schema duplication | Must mirror Canvas schema | Uses the actual tables |
+| Auth/access | Separate credentials | Same DB credentials |
+| Backup/restore | Separate process | Included in Canvas backups |
+| Cost | Additional server | $0 (extensions are free) |
+
+### What the Agent Sees (Fork Model)
+
+The agent gets schema context that includes ALL three layers:
+
+```markdown
+## Canvas Course Content — Agent Schema Context
+
+### Layer 1: Direct queries (relational)
+- Assignments: SELECT title, description, due_at FROM assignments WHERE context_id = ?
+- Pages: SELECT title, body FROM wiki_pages JOIN wikis ON ... WHERE context_id = ?
+- Modules: SELECT name, prerequisites FROM context_modules WHERE context_id = ?
+- Module items: SELECT content_type, content_id FROM content_tags WHERE context_module_id = ?
+
+### Layer 2: Semantic search (pgvector)
+- Similar content: SELECT title FROM wiki_pages ORDER BY embedding <=> ? LIMIT 5
+- Cross-content search: UNION across assignments + wiki_pages + discussions
+
+### Layer 3: Knowledge graph (AGE)
+- Prerequisites: MATCH (m)-[:PREREQUISITE]->(p) RETURN p.name
+- Concept chain: MATCH path = (start)-[:TEACHES|PREREQUISITE*]->(end) RETURN path
+- Learning path: MATCH (c:Concept)<-[:TEACHES]-(m:Module) RETURN m ORDER BY m.position
+
+### Utility
+- Clean content: SELECT html_to_markdown(description) FROM assignments WHERE id = ?
+```
+
+The agent picks the right layer based on the query type:
+- Structural query ("what's due?") → Layer 1 (relational)
+- Semantic query ("content about memory systems") → Layer 2 (pgvector)
+- Traversal query ("prerequisites for Week 7?") → Layer 3 (AGE)
+
+No speculation. The schema context tells it exactly which layer and which query pattern to use.
+
+### Pre-Made Views: Encode Complexity Once, Query Simply Forever
+
+Instead of the agent composing JOINs and filters every time, pre-made PostgreSQL views encode the correct logic once. The agent just reads from them:
+
+```sql
+-- ============================================================
+-- VIEWS FOR AI AGENT ACCESS (created once on fork deployment)
+-- ============================================================
+
+-- All published assignments for a course, FERPA-safe, clean format
+CREATE VIEW ai_course_assignments AS
+SELECT a.id, a.title,
+       html_to_markdown(a.description) AS description_md,
+       a.due_at, a.lock_at, a.unlock_at,
+       a.points_possible, a.grading_type, a.submission_types,
+       a.context_id AS course_id
+FROM assignments a
+WHERE a.workflow_state = 'published'
+  AND a.context_type = 'Course';
+
+-- All published pages
+CREATE VIEW ai_course_pages AS
+SELECT wp.id, wp.title, wp.url,
+       html_to_markdown(wp.body) AS body_md,
+       w.context_id AS course_id
+FROM wiki_pages wp
+JOIN wikis w ON wp.wiki_id = w.id
+WHERE wp.workflow_state = 'active'
+  AND w.context_type = 'Course';
+
+-- Module structure with items resolved
+CREATE VIEW ai_course_modules AS
+SELECT cm.id AS module_id, cm.name AS module_name, cm.position,
+       cm.prerequisites, cm.completion_requirements,
+       ct.position AS item_position, ct.title AS item_title,
+       ct.content_type, ct.content_id, ct.url AS external_url,
+       cm.context_id AS course_id
+FROM context_modules cm
+LEFT JOIN content_tags ct ON ct.context_module_id = cm.id
+  AND ct.workflow_state = 'active'
+WHERE cm.workflow_state = 'active'
+  AND cm.context_type = 'Course'
+ORDER BY cm.position, ct.position;
+
+-- Announcements (recent first)
+CREATE VIEW ai_course_announcements AS
+SELECT dt.id, dt.title,
+       html_to_markdown(dt.message) AS message_md,
+       dt.posted_at, dt.context_id AS course_id
+FROM discussion_topics dt
+WHERE dt.type = 'Announcement'
+  AND dt.workflow_state = 'active'
+  AND dt.context_type = 'Course'
+ORDER BY dt.posted_at DESC;
+
+-- Course syllabus
+CREATE VIEW ai_course_syllabus AS
+SELECT c.id AS course_id, c.name,
+       html_to_markdown(c.syllabus_body) AS syllabus_md
+FROM courses c
+WHERE c.workflow_state = 'available';
+
+-- Unified content search (all content types, one view)
+CREATE VIEW ai_course_content AS
+SELECT course_id, 'assignment' AS content_type, id AS content_id,
+       title, description_md AS content_md, due_at
+FROM ai_course_assignments
+UNION ALL
+SELECT course_id, 'page', id, title, body_md, NULL
+FROM ai_course_pages
+UNION ALL
+SELECT course_id, 'announcement', id, title, message_md, posted_at
+FROM ai_course_announcements;
+```
+
+Now the agent's context document is drastically simpler:
+
+```markdown
+## How to query course content
+
+| What you need | Query |
+|--------------|-------|
+| All assignments with dates | `SELECT title, due_at, points_possible, description_md FROM ai_course_assignments WHERE course_id = ?` |
+| Assignments due this week | `SELECT * FROM ai_course_assignments WHERE course_id = ? AND due_at BETWEEN NOW() AND NOW() + interval '7 days'` |
+| Module structure | `SELECT module_name, item_title, content_type FROM ai_course_modules WHERE course_id = ? ORDER BY position, item_position` |
+| Search all content | `SELECT content_type, title, content_md FROM ai_course_content WHERE course_id = ? AND content_md ILIKE '%search_term%'` |
+| Syllabus | `SELECT syllabus_md FROM ai_course_syllabus WHERE course_id = ?` |
+| Recent announcements | `SELECT title, message_md, posted_at FROM ai_course_announcements WHERE course_id = ? LIMIT 5` |
+| Page by title | `SELECT body_md FROM ai_course_pages WHERE course_id = ? AND title ILIKE '%query%'` |
+| Semantic search | `SELECT title, content_md FROM ai_course_content WHERE course_id = ? ORDER BY embedding <=> ? LIMIT 5` |
+```
+
+**What the views encode that the agent doesn't have to think about:**
+- FERPA filtering (`workflow_state = 'published'` / `'active'`)
+- HTML→markdown conversion (`html_to_markdown()` called in the view)
+- Table joins (wiki_pages → wikis → courses, content_tags → context_modules)
+- Content type discrimination (`type = 'Announcement'` vs regular discussions)
+- Sort order (modules by position, announcements by date)
+- The unified `ai_course_content` view searches ALL content types in one query
+
+**The agent's schema context shrinks from ~100 lines of table documentation to ~20 lines of view documentation.** The complexity is in the view definitions (created once), not in the agent's context (loaded every session).
+
+---
+
+## Part 10: Implementation Plan for Lab 3.2
 
 ### What We'll Build
 
