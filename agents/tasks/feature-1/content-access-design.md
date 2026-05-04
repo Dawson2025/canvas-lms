@@ -941,32 +941,141 @@ File-based:                              Data-based:
 | **Full-text search (tsvector)** | Keyword occurrence | Ranked keyword matching across large text fields | `WHERE body @@ to_tsquery('academic & honesty')` — faster than ILIKE, supports relevance ranking |
 | **File-based (Read/Grep)** | File-level | Full content for deep reading, contextual understanding | "Explain the Lab 3 requirements in detail" — needs the whole description |
 
-### What Each Avenue Finds That Others Miss
+### What Each Avenue Finds That Others Can't
+
+| Data Avenue | Granularity | Unique Capability | What It Finds That Others Miss |
+|------------|-------------|-------------------|-------------------------------|
+| **Relational (SQL)** | Field-level | Exact values, filters, joins, counts, sorting | Precise metadata: "due Friday at 11:59pm", "3 assignments worth 30 pts each", "count of unpublished pages" |
+| **Vector (pgvector)** | Semantic chunk | Meaning-based similarity, handles paraphrasing | Conceptual matches: "I'm struggling" → finds "office hours", "tutoring resources" without keyword overlap |
+| **Knowledge Graph (AGE)** | Relationship-level | Multi-hop traversal, path discovery, indirect connections | Structural chains: "Week 2 → Week 3 → Week 5 → Final" prerequisite path that spans 4 hops |
+| **Full-text (tsvector)** | Keyword occurrence | Ranked keyword matching across large text, positional awareness | Exact phrase location: "find where it says 'academic honesty'" with relevance ranking |
+| **File-based + indexes + triggers** | Context-level | Full document understanding, cross-file narrative, human-readable state, zero-infrastructure portability | See detailed breakdown below |
+
+### File-Based Avenue: Unique Capabilities
+
+The file-based avenue with indexes and trigger-pointer hierarchies provides things NO database avenue can:
+
+**1. Full contextual understanding**
+
+Databases return fragments. Files give the agent the full surrounding context — the paragraph BEFORE and AFTER the answer, the section heading it falls under, the document's overall narrative flow. When a student asks "explain the late policy," the agent doesn't just need the rule — it needs the surrounding reasoning, exceptions, and tone.
 
 ```
-"What's due Friday?"
-  → Relational: SELECT due_at WHERE due_at = '2026-05-09' ✓
-  → Vector: can't filter by date ✗
-  → Graph: dates aren't relationships ✗
-  → Files: would need to grep all assignment files ✗ (slow)
+Database: "Late work loses 10% per day"  (field-level, decontextualized)
 
-"I'm overwhelmed, any resources to help?"
-  → Vector: embedding similarity finds "office hours", "tutoring", "study group" ✓
-  → Relational: no keyword match for "overwhelmed" ✗
-  → Graph: not a relationship query ✗
-  → Files: grep "overwhelmed" → 0 results ✗
+File: "## Late Work Policy
+       We understand emergencies happen. Late work loses 10% per day,
+       capped at 50%. If you have an extenuating circumstance, contact
+       the instructor BEFORE the deadline for an extension. Medical
+       and family emergencies are handled case-by-case."
+       (contextual — the agent can give a complete, nuanced answer)
+```
 
-"What concepts from Module 2 feed into Module 6?"
-  → Graph: MATCH (m2)-[:PREREQUISITE|TEACHES*]->(m6) RETURN path ✓
-  → Relational: can get direct prerequisites but not multi-hop chains ✗
-  → Vector: can find similar content but not structural paths ✗
-  → Files: would need to manually trace frontmatter pointers ✗ (tedious)
+**2. Cross-file narrative and document flow**
 
-"Where exactly does the syllabus mention 'academic honesty'?"
-  → Full-text: to_tsquery with position highlighting ✓
-  → Relational: ILIKE works but slower, no ranking ○
-  → Vector: too broad — returns semantically similar but not exact ✗
-  → Files: grep works but no relevance ranking ○
+Files in a directory have ORDER and RELATIONSHIP through their organization. An agent can read Module 3's files in sequence and understand how the instructor intended concepts to build on each other. Databases return isolated rows with no narrative flow.
+
+```
+modules/03-memory/
+  01-instruction-3-1.md   → defines concepts
+  02-lab-3-1.md           → applies concepts (references instruction)
+  03-prepare-3-2.md       → reflects on concepts
+  04-lab-3-2.md           → implements with concepts
+
+The sequence IS the pedagogy. A database query returns these as unordered rows.
+```
+
+**3. Human-readable, human-editable state**
+
+Files are the only avenue an instructor can directly read and edit without tools. An instructor can open `module.md` in any text editor, see the prerequisites in frontmatter, and edit them. No SQL client, no graph browser, no embedding pipeline. This matters for the agent-proposed relationship workflow — the instructor reviews and edits markdown, not database records.
+
+**4. Trigger-pointer hierarchies (DAG traversal WITHOUT a graph database)**
+
+With frontmatter pointers and trigger rules, files form a navigable DAG:
+
+```yaml
+# modules/04-qa/module.md frontmatter
+---
+prerequisites:
+  - path: ../03-memory/module.md
+    type: prerequisite
+  - path: ../02-architecture/module.md
+    type: builds_on
+concepts:
+  - name: quality_assurance
+    relates_to:
+      - concept: memory_purging
+        path: ../03-memory/module.md
+        relationship: analogy
+        evidence: "QA prevents bad code accumulation like purging prevents stale memory"
+---
+```
+
+An agent can traverse this DAG by following pointers — read module.md → follow prerequisite path → read that module.md → follow its prerequisites. This is graph traversal without Apache AGE. Slower than Cypher, but:
+- Zero infrastructure (just files)
+- Human-readable (instructor can see and edit the graph)
+- Portable (copy the directory, the graph comes with it)
+- Versionable (git tracks every change to every edge)
+
+**5. Zero-infrastructure portability**
+
+Copy a directory → everything works. No database to export, no embeddings to re-compute, no graph to migrate. This is why files are the baseline for the extension model — they work on any machine with a filesystem.
+
+**6. Git-native versioning and history**
+
+Every change to every file is tracked. "What was the late policy last semester?" is `git show HEAD~50:syllabus.md`. No database migration, no snapshot management. The entire history of course content changes is in git log.
+
+**7. Agent pre-training familiarity**
+
+LLMs have been trained on billions of files. They know markdown, frontmatter, directory structures, `ls`, `grep`, `cat`. They have NOT been trained on your specific database schema, Cypher syntax, or pgvector query patterns. File-based access has zero educational cost — the agent already knows how to use it.
+
+### Example: What Files + Triggers Find That Databases Miss
+
+```
+"Walk me through how Module 3 builds on what we learned in Module 2"
+
+  File-based: Agent reads modules/02/module.md and modules/03/module.md.
+  Sees the narrative flow, the concept progression, the instructor's
+  framing of how memory concepts extend architectural state concepts.
+  Can give a cohesive pedagogical answer.  ✓
+
+  Relational: Returns two rows with module names and prerequisites.
+  No narrative, no framing, no pedagogical context.  ✗
+
+  Vector: Returns chunks semantically similar to "Module 3 builds on Module 2"
+  but without document structure or progression.  ✗
+
+  Graph: Returns PREREQUISITE edge between Module 2 and Module 3.
+  Correct but thin — no WHY, no HOW, no instructor narrative.  ✗
+```
+
+```
+"The instructor mentioned something about extensions in the late policy
+ section, but I can't remember the exact rule. Can you also show me what
+ changed from the original syllabus?"
+
+  File-based: Read syllabus.md (full context around late policy section),
+  then git show HEAD~1:syllabus.md to compare with previous version.
+  Both the current answer AND the history.  ✓
+
+  Relational: SELECT syllabus_body gives current text. No history.  ○
+
+  All others: Can't do version comparison.  ✗
+```
+
+```
+"I'm writing my Lab 3.2 submission. Show me the template from the lab
+ description and also the feature-implementation.md agent spec I need
+ to follow."
+
+  File-based: Agent reads both files, understands the template structure,
+  cross-references with the agent spec, sees how they connect.
+  Multiple files read in context.  ✓
+
+  Relational: Returns assignment description (HTML blob) for Lab 3.2.
+  Doesn't know about the agent spec file — that's in the repo, not
+  the Canvas DB.  ✗
+
+  Others: Same limitation — no cross-source reading.  ✗
 ```
 
 ### Trigger Hierarchy Routes to the Right Avenue
@@ -1000,6 +1109,106 @@ Trigger Hierarchy for Course Agent
     └── Route to: Relational first (get list), then file-based (get details)
     └── Examples: "what's due this week and what do I need to know about each"
 ```
+
+### File-Based Avenue Types: Pros and Cons of Each
+
+Not all file-based avenues are the same. Each type serves a different purpose in the progressive disclosure chain:
+
+| File Avenue | What It Contains | Unique Strength | Limitation |
+|------------|-----------------|-----------------|-----------|
+| **System prompt (CLAUDE.md/AGENTS.md)** | Identity, triggers, resource pointers | Always loaded, zero-cost routing decisions | Limited budget (~2-5% of context window). Can't hold detail. |
+| **Rules (`.0agnostic/02_rules/`)** | Mandatory constraints, guardrails | Enforces behavior without agent reasoning — deterministic | Must be loaded to be effective. Rules not loaded = rules not followed. |
+| **Skills (`.claude/skills/`)** | Workflow templates, procedures | Reusable across sessions. YAML frontmatter enables discovery. | Static listing cost scales with skill count. Noise past 30-50. |
+| **Knowledge docs (`.0agnostic/01_knowledge/`)** | Domain knowledge, reference material | Deep, authoritative, human-curated content | Must be explicitly loaded — invisible until triggered |
+| **Protocols (`.0agnostic/03_protocols/`)** | Step-by-step procedures, trajectories | Proven workflows that reduce agent mistakes | Rigid — may not fit novel situations |
+| **Episodic memory (`.0agnostic/04_episodic_memory/`)** | Session records, what happened when | Continuity across sessions — agent knows what was done before | Accumulates over time, needs pruning |
+| **Handoff documents (`.0agnostic/05_handoff_documents/`)** | Cross-entity/cross-session communication | Preserves context when switching between agents or sessions | One-time-use — useful once then stale |
+| **Index files (manifests, 0INDEX.md, README.md)** | Pointers to other content with summaries | Enables discovery without loading detail. The "table of contents." | Must be maintained when content changes |
+
+### Infrastructure Systems That Make File-Based Avenues Work
+
+These aren't avenues themselves — they're the infrastructure that organizes, connects, and maintains the avenues:
+
+**Entity System**
+- Every piece of content belongs to an entity with a stable UUID
+- Entities have canonical identity (`0AGNOSTIC.md`), on-demand resources (`.0agnostic/`), and generated outputs (`CLAUDE.md`)
+- Enables: "which entity owns this knowledge?" → follow the entity path to find related content
+- For courses: each course is an entity, each module could be a child entity, content organized by the hierarchy
+
+**Layer-Stage System**
+- 11 stages (request gathering → research → design → ... → current product → archives) organize work chronologically
+- Stages have inputs, outputs, and progression rules
+- Enables: "where in the workflow is this course?" → follow stage progression
+- For courses: maps directly to course workflow (syllabus → instruction → lab → assessment)
+
+**Trigger-Pointer System (UUID-Based References)**
+- Every file, directory, entity, and section has a stable UUID
+- References use UUIDs that survive renames and moves
+- `{{ref:UUID|path}}` syntax resolves to current paths at sync time
+- Enables: "find this content even if it moved" → UUID lookup always works
+- For courses: assignment references don't break when instructor reorganizes modules
+
+**Propagation System**
+- Detail flows through a chain: stage outputs (full) → knowledge docs (distilled) → 0AGNOSTIC.md (pointers) → CLAUDE.md (compressed)
+- Each level is derived from the level below it
+- Changes propagate UP the chain via sync tools
+- Enables: progressive disclosure with guaranteed consistency between levels
+- For courses: when an assignment description changes, the manifest (pointer level) reflects it after propagation
+
+**How These Systems Work Together for a Course Agent**
+
+```
+Course Entity (UUID: abc-123)
+│
+├── 0AGNOSTIC.md (system prompt source)
+│   ├── Identity: "CSE 290R Applied AI"
+│   ├── Triggers: query routing table
+│   └── Resources: pointers to .0agnostic/ content
+│
+├── .0agnostic/
+│   ├── 01_knowledge/
+│   │   ├── course_manifest.md (index — summaries + keywords)
+│   │   └── sources/ (full extracted readings)
+│   ├── 02_rules/
+│   │   ├── ferpa_scope_rule.md (always filter unpublished)
+│   │   └── groups/
+│   │       └── query_routing.md (trigger hierarchy for student queries)
+│   ├── 03_protocols/
+│   │   ├── content_fetch_protocol.md (how to retrieve from API/DB)
+│   │   └── html_to_markdown_protocol.md (conversion procedure)
+│   ├── 04_episodic_memory/
+│   │   └── sessions/ (past agent conversations, what was asked before)
+│   └── 05_handoff_documents/
+│       └── semester_handoff.md (what changed since last semester)
+│
+├── CLAUDE.md (auto-generated from 0AGNOSTIC.md)
+│   └── Compressed version of everything above — the system prompt
+│
+└── layer_1_group/ (optional — child entities per module)
+    ├── module_01_context/
+    │   ├── 0AGNOSTIC.md (module identity, prerequisites, concepts)
+    │   └── .0agnostic/01_knowledge/ (module-specific content)
+    ├── module_02_architecture/
+    └── ...
+```
+
+The entity system provides structure. The layer-stage system provides workflow. The trigger-pointer system provides stable references. The propagation system keeps everything in sync. Together, they give the file-based avenues the same organizational power that a database schema gives data-based avenues — just in files.
+
+### When File Infrastructure Approaches Database Capability
+
+| Database Capability | File Infrastructure Equivalent | Tradeoff |
+|--------------------|-------------------------------|----------|
+| Schema (table definitions) | Entity structure (0AGNOSTIC.md + .0agnostic/ dirs) | Files are more flexible but less enforced |
+| Foreign keys (references) | UUID pointers in frontmatter | Files can have broken refs — need validation tooling |
+| Indexes (fast lookup) | Manifest files, .entity-lookup.tsv, .uuid-index.tsv | Files need rebuilding — `pointer-sync.sh --rebuild` |
+| Views (pre-joined queries) | Trigger hierarchy (routes to pre-composed content) | File triggers are text-matched, not SQL-optimized |
+| Transactions (consistency) | Propagation chain (sync tools) | Files can get out of sync — need sync discipline |
+| Access control (row-level) | Workflow_state filtering (rules) | File-based FERPA is convention, not enforcement |
+| Query optimizer | Agent reasoning (with schema context) | Agent may choose suboptimal path |
+
+Files approach database capability when you add the infrastructure systems. They never fully match databases on granularity or query optimization — but they have unique advantages (portability, readability, versioning, zero infrastructure) that databases can't match.
+
+---
 
 ### Progressive Complexity for Data Avenues
 
