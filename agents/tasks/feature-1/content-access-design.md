@@ -1208,6 +1208,92 @@ The entity system provides structure. The layer-stage system provides workflow. 
 
 Files approach database capability when you add the infrastructure systems. They never fully match databases on granularity or query optimization — but they have unique advantages (portability, readability, versioning, zero infrastructure) that databases can't match.
 
+### Cross-Avenue Flow: Avenues Connect To Each Other
+
+The most powerful pattern is when avenues hand off to each other — each doing what it's best at, then linking to the next:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  CROSS-AVENUE FLOW EXAMPLE                                          │
+│                                                                     │
+│  Student: "I have a busy week, what should I prioritize?"           │
+│                                                                     │
+│  ① DATA AVENUE (relational) — surgical metadata query               │
+│     SELECT title, due_at, points_possible                           │
+│     FROM ai_course_assignments                                      │
+│     WHERE due_at BETWEEN NOW() AND NOW() + interval '7 days'       │
+│     → Lab 3.2 (30pts, Fri), Prepare 4.1 (10pts, Mon)               │
+│     Cost: ~10 tokens. Agent now knows WHAT and WHEN.                │
+│                                            │                        │
+│  ② CROSS-AVENUE LINK ─────────────────────┘                        │
+│     Each result carries a pointer to file-based content:            │
+│     Lab 3.2 → assignments/lab-3-2.md (or generate from HTML)       │
+│     + staleness check: source_updated_at vs last_synced             │
+│     + if stale → re-fetch from API/DB, reconvert HTML→markdown      │
+│                                            │                        │
+│  ③ FILE AVENUE — full context for the chosen assignment             │
+│     Student picks Lab 3.2 → agent loads assignments/lab-3-2.md      │
+│     Full requirements, rubric, template, references to prior labs   │
+│     Cost: ~100 tokens. Agent now understands the assignment.        │
+│                                            │                        │
+│  ④ TRIGGER HIERARCHY — deeper disclosure FROM that assignment       │
+│     Based on what the student needs help with:                      │
+│     ├── "How do I write the agent spec?"                            │
+│     │   → Load: agents/feature-implementation.md (template)         │
+│     ├── "How does the GitHub board workflow work?"                   │
+│     │   → Load: agents/project-creation.md (board reference)        │
+│     ├── "What did we do in Lab 2.1 that this builds on?"            │
+│     │   → Load: assignments/lab-2-1.md (prior work)                 │
+│     ├── "How do I query Canvas content for my implementation?"      │
+│     │   → Load: agents/canvas-content-context.md (schema)           │
+│     └── "I'm having trouble with the git PR workflow"               │
+│         → Load: protocols/pr-workflow.md                            │
+│                                                                     │
+│  Total context loaded: ~200 tokens (out of 200K available)          │
+│  NOT loaded: 18 other assignments, all pages, all announcements,    │
+│  all other modules (~45K tokens saved)                              │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Each avenue does what it's best at:**
+- **Relational** → finds the right items surgically (10 tokens, not 45K)
+- **Cross-avenue links** → connects data results to file content (with staleness tracking)
+- **File-based** → provides full contextual understanding for the chosen item
+- **Trigger hierarchy** → discloses deeper detail based on the student's actual need
+
+**Staleness tracking at the cross-avenue boundary:**
+
+When a data query returns a result that links to a cached file, the link carries freshness metadata:
+
+```yaml
+# In the manifest or cross-reference index:
+- assignment_id: 16835669
+  title: "Lab 3.2: Agent Driven Feature Implementation"
+  due_at: "2026-05-09T23:59:59"
+  cached_file: assignments/lab-3-2.md
+  source_updated_at: "2026-05-04T18:00:00"   # from Canvas API/DB
+  last_synced: "2026-05-04T22:00:00"          # when we last converted
+  needs_resync: false                          # source_updated_at < last_synced
+```
+
+If `source_updated_at > last_synced`, the agent knows to re-fetch and reconvert before loading the file. The staleness check is at the BOUNDARY between avenues — where data hands off to files.
+
+**This pattern scales to any depth:**
+
+```
+Relational query → assignment links → file content → trigger hierarchy
+                                                      ├── rubric details
+                                                      │   └── per-criterion examples
+                                                      ├── prior lab references
+                                                      │   └── prior lab content
+                                                      │       └── its own triggers...
+                                                      └── reading references
+                                                          └── source extraction files
+                                                              └── original URL (re-fetch)
+```
+
+Each level in the hierarchy is a new trigger point. The agent descends only as far as the student's question requires. A simple "what's due?" stops at step ①. A complex "help me plan my approach to Lab 3.2 given what I learned in Lab 2.1" descends through all four steps.
+
 ---
 
 ### Progressive Complexity for Data Avenues
