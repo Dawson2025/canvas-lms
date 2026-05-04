@@ -917,7 +917,121 @@ Agent stops at whatever depth answers the question. "How many modules?" → mani
 
 ---
 
-## Part 14: Implementation Plan for Lab 3.2
+## Part 14: Context Avenue Granularity — Why Multiple Data Avenues Exist
+
+### The Granularity Problem with File-Only Access
+
+File-based progressive disclosure has a **granularity floor** — the smallest unit is a file. If the answer is one field buried in a 200-line page, the agent loads all 200 lines.
+
+```
+File-based:                              Data-based:
+  "When is Lab 3 due?"                     "When is Lab 3 due?"
+  → Load assignments/lab-3.md (100 lines)  → SELECT due_at → "2026-05-09" (1 line)
+  → Agent scans for due date               → Exact answer, zero waste
+  → 99 lines wasted
+```
+
+### Each Data Avenue Has Unique Granularity and Capability
+
+| Data Avenue | Granularity | Unique Capability | Example |
+|------------|-------------|-------------------|---------|
+| **Relational (SQL)** | Field-level | Exact values, filters, joins, counts, sorting | `SELECT title, due_at WHERE due_at BETWEEN...` |
+| **Vector (pgvector)** | Semantic chunk | Find content by MEANING, not just keywords. Handles paraphrasing. | "I'm struggling with the project" → finds "office hours", "study tips", "project FAQ" even without keyword match |
+| **Knowledge Graph (AGE)** | Relationship-level | Multi-hop path traversal. Discover indirect connections. | "Do I need Week 2 for the final?" → traverses prerequisite chain across 5 modules |
+| **Full-text search (tsvector)** | Keyword occurrence | Ranked keyword matching across large text fields | `WHERE body @@ to_tsquery('academic & honesty')` — faster than ILIKE, supports relevance ranking |
+| **File-based (Read/Grep)** | File-level | Full content for deep reading, contextual understanding | "Explain the Lab 3 requirements in detail" — needs the whole description |
+
+### What Each Avenue Finds That Others Miss
+
+```
+"What's due Friday?"
+  → Relational: SELECT due_at WHERE due_at = '2026-05-09' ✓
+  → Vector: can't filter by date ✗
+  → Graph: dates aren't relationships ✗
+  → Files: would need to grep all assignment files ✗ (slow)
+
+"I'm overwhelmed, any resources to help?"
+  → Vector: embedding similarity finds "office hours", "tutoring", "study group" ✓
+  → Relational: no keyword match for "overwhelmed" ✗
+  → Graph: not a relationship query ✗
+  → Files: grep "overwhelmed" → 0 results ✗
+
+"What concepts from Module 2 feed into Module 6?"
+  → Graph: MATCH (m2)-[:PREREQUISITE|TEACHES*]->(m6) RETURN path ✓
+  → Relational: can get direct prerequisites but not multi-hop chains ✗
+  → Vector: can find similar content but not structural paths ✗
+  → Files: would need to manually trace frontmatter pointers ✗ (tedious)
+
+"Where exactly does the syllabus mention 'academic honesty'?"
+  → Full-text: to_tsquery with position highlighting ✓
+  → Relational: ILIKE works but slower, no ranking ○
+  → Vector: too broad — returns semantically similar but not exact ✗
+  → Files: grep works but no relevance ranking ○
+```
+
+### Trigger Hierarchy Routes to the Right Avenue
+
+The agent doesn't decide which avenue to use — the trigger rules encode that:
+
+```
+Trigger Hierarchy for Course Agent
+│
+├── Metadata queries (dates, counts, titles, points)
+│   └── Route to: Relational (SQL views)
+│   └── Examples: "what's due", "how many assignments", "how many points"
+│
+├── Semantic queries (topic understanding, recommendations)
+│   └── Route to: Vector search (pgvector)
+│   └── Examples: "help with", "resources about", "content related to"
+│
+├── Structural queries (prerequisites, paths, dependencies)
+│   └── Route to: Knowledge graph (AGE)
+│   └── Examples: "what do I need before", "how does X connect to Y"
+│
+├── Keyword search (find specific text in content)
+│   └── Route to: Full-text search (tsvector) or grep
+│   └── Examples: "where does it say", "find the part about"
+│
+├── Content understanding (explain, summarize, detail)
+│   └── Route to: File-based (Read full markdown)
+│   └── Examples: "explain the requirements", "summarize module 3"
+│
+└── Compound queries (metadata + content)
+    └── Route to: Relational first (get list), then file-based (get details)
+    └── Examples: "what's due this week and what do I need to know about each"
+```
+
+### Progressive Complexity for Data Avenues
+
+Not every deployment needs all avenues. The progressive complexity roadmap for data avenues:
+
+```
+Level 0: File-only (grep + read)
+  → Works immediately, no infrastructure
+  → Granularity floor: file-level
+
+Level 1: + Relational queries (SQL/API)
+  → Field-level granularity for metadata
+  → Extension: API calls. Fork: SQL views.
+
+Level 2: + Full-text search
+  → Keyword matching with ranking
+  → Extension: API search_term param. Fork: tsvector columns.
+
+Level 3: + Vector search (pgvector)
+  → Semantic similarity, handles paraphrasing
+  → Extension: local embedding. Fork: pgvector on Canvas DB.
+
+Level 4: + Knowledge graph (AGE)
+  → Multi-hop traversal, structural reasoning
+  → Extension: filesystem DAG. Fork: AGE on Canvas DB.
+```
+
+Each level adds a new granularity capability. Start at Level 0, graduate when the simpler levels demonstrably fail for your queries.
+
+---
+
+## Part 15: Implementation Plan for Lab 3.2
 
 ### What We'll Build
 
