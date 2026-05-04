@@ -571,7 +571,353 @@ Now the agent's context document is drastically simpler:
 
 ---
 
-## Part 10: Implementation Plan for Lab 3.2
+## Part 10: Extension Model — API-Only Equivalent Architecture
+
+### The Constraint
+
+No database access. Only the Canvas REST API with an API token. Must replicate the fork model's capabilities client-side.
+
+### Mapping Fork Capabilities to Extension Equivalents
+
+| Fork Model | Extension Equivalent | How |
+|-----------|---------------------|-----|
+| Pre-made PostgreSQL views | Pre-made CLI subcommands | `canvas-ai assignments --course 407700 --due-this-week` |
+| Ad-hoc SQL with schema knowledge | Ad-hoc API calls with endpoint knowledge | Agent composes `curl` calls from endpoint map |
+| `html_to_markdown()` in views | Client-side converter (`pandoc`, `html2text`, or Python) | Pipe API HTML output through converter |
+| pgvector semantic search | Local embeddings (pgvector on local Postgres, or in-memory) | Embed fetched content locally, search locally |
+| Apache AGE knowledge graph | Filesystem DAG with frontmatter pointers | `module.md` with `prerequisites: [...]` |
+| FERPA filtering in views | API handles this — only returns published content to students | Already solved |
+| Background auto-reindex on save | Re-run sync on schedule or on-demand | `canvas-ai sync --course 407700` |
+
+### Pre-Made CLI Subcommands (Equivalent to Views)
+
+```bash
+# These are the "pre-made views" of the extension model.
+# Each subcommand knows which endpoint to call, how to paginate,
+# and converts HTML → markdown automatically.
+
+canvas-ai assignments --course 407700                    # all published assignments
+canvas-ai assignments --course 407700 --due-this-week    # filtered by date
+canvas-ai modules --course 407700                        # module structure with items
+canvas-ai pages --course 407700                          # all published pages
+canvas-ai page --course 407700 --title "syllabus"        # specific page content (markdown)
+canvas-ai syllabus --course 407700                       # course syllabus (markdown)
+canvas-ai announcements --course 407700 --limit 5        # recent announcements
+canvas-ai search --course 407700 --query "late policy"   # search across all content types
+canvas-ai manifest --course 407700                       # generate index/manifest
+canvas-ai sync --course 407700 --output ./my-course/     # full export to filesystem
+```
+
+Each subcommand:
+1. Calls the right API endpoint(s)
+2. Handles pagination automatically
+3. Converts HTML → markdown
+4. Outputs clean, agent-readable text
+
+The agent calls these via Bash — single tool, zero context cost for tool definitions.
+
+### Ad-Hoc API Queries (Equivalent to Schema Knowledge)
+
+For the 20% of queries no subcommand covers, the agent needs endpoint knowledge:
+
+```markdown
+## Canvas API Endpoint Map (loaded via trigger)
+
+| Content | Endpoint | Key Params |
+|---------|---------|-----------|
+| Course + syllabus | `GET /courses/:id?include[]=syllabus_body` | `include[]=total_students` |
+| Assignments | `GET /courses/:id/assignments` | `order_by=due_at`, `bucket=upcoming` |
+| Single assignment | `GET /courses/:id/assignments/:aid` | `include[]=rubric` |
+| Modules + items | `GET /courses/:id/modules?include[]=items` | `per_page=100` |
+| Pages | `GET /courses/:id/pages` | `search_term=query`, `sort=title` |
+| Single page | `GET /courses/:id/pages/:url` | returns `body` (HTML) |
+| Discussions | `GET /courses/:id/discussion_topics` | `only_announcements=true` |
+| Files | `GET /courses/:id/files` | `sort=name`, `content_types[]=...` |
+| Submissions | `GET /courses/:id/assignments/:aid/submissions/self` | `include[]=rubric_assessment` |
+
+All endpoints: paginate with `per_page=100`, follow `Link: <url>; rel="next"` header.
+Auth: `Authorization: Bearer $CANVAS_TOKEN`
+Base: `$CANVAS_URL/api/v1/`
+```
+
+~30 lines. Loaded on demand when the agent needs to compose a custom query.
+
+### Extension Model Limitations (Honest)
+
+| Limitation | Impact | Workaround |
+|-----------|--------|-----------|
+| N+1 API calls for module items | Slow for large courses (1 call per item to get content) | `include[]=items` on modules endpoint gets metadata; fetch content only when needed |
+| Rate limiting | Canvas rate limits API calls | Batch fetches, cache results locally |
+| No server-side joins | Can't cross-reference in one query | Fetch both datasets, join client-side |
+| No semantic search | Can't find "content LIKE this" | Local grep, or build local embedding index |
+| Pagination overhead | Max 100 items per request | Auto-paginate in CLI subcommands |
+| HTML content | All descriptions/bodies returned as HTML | Auto-convert via `html2text` in CLI |
+
+---
+
+## Part 11: HTML→Markdown Conversion (Both Models)
+
+### Why This Is Essential
+
+Canvas stores ALL content as HTML with inline styles, nested divs, and Canvas-specific CSS. This is what the agent actually receives:
+
+```html
+<div style="margin:0;padding:0;font-family:Georgia,'Times New Roman',Times,serif;
+font-size:17px;line-height:1.68;color:#0f0e0d;background-color:#ebe6dc;
+padding:clamp(12px,3vw,22px);">
+<div style="max-width:52rem;margin:0 auto;">
+<h2 style="font-family:Georgia;font-size:clamp(1.45rem,2vw+0.9rem,2.1rem);
+line-height:1.12;margin:2.25rem 0 0.75rem 0;padding-bottom:0.35rem;
+border-bottom:1px solid rgba(15,14,13,0.22);">Instruction 3.1</h2>
+<p style="margin:0 0 1.1em 0;">Skim the <span style="font-style:normal;
+color:#0f0e0d;">suggested readings</span>...</p>
+```
+
+vs what the agent needs:
+
+```markdown
+## Instruction 3.1
+
+Skim the **suggested readings**...
+```
+
+The HTML version wastes 3-5x more tokens on CSS noise. Multiply across an entire course and you're burning thousands of tokens on inline styles instead of content.
+
+### Implementation
+
+| Model | Where Conversion Happens | Tool |
+|-------|------------------------|------|
+| **Fork** | Server-side: `html_to_markdown()` PostgreSQL function or Rails helper, called in views | Content arrives pre-converted |
+| **Extension** | Client-side: CLI subcommands pipe through converter | `pandoc -f html -t markdown`, `html2text`, or Python `markdownify` |
+| **Both** | The conversion strips: inline styles, Canvas CSS classes, `<script>` tags, data attributes, empty divs | Preserves: headings, lists, tables, links, bold/italic, code blocks |
+
+### Conversion Quality Matters
+
+A naive `strip_tags()` loses structure (headings become plain text, tables become run-on text). A good converter preserves semantic structure:
+
+```python
+# Bad: strip_tags("&lt;h2>Title&lt;/h2>&lt;ul>&lt;li>Item&lt;/li>&lt;/ul>") → "TitleItem"
+# Good: html_to_markdown("&lt;h2>Title&lt;/h2>&lt;ul>&lt;li>Item&lt;/li>&lt;/ul>") → "## Title\n- Item"
+```
+
+For the fork, this is a one-time function deployed with the views. For the extension, it's built into the CLI tool.
+
+---
+
+## Part 12: Progressive Disclosure & Trigger Hierarchy (Both Models)
+
+### The Problem Without Progressive Disclosure
+
+Loading ALL course content into context at once wastes the context window:
+
+```
+A course with 4 modules × 5 items × ~2000 tokens each = ~40,000 tokens
++ syllabus (~3,000 tokens)
++ announcements (~2,000 tokens)
+= ~45,000 tokens BEFORE the agent even starts reasoning
+```
+
+At 40% of a 200K window, that's already at budget. And most queries only need 1-2 content items.
+
+### The Solution: Trigger Hierarchy
+
+Same pattern as our entity system — a hierarchy of triggers that routes queries to the right content at the right level of detail, without loading everything.
+
+```
+Level 0: Course Manifest (ALWAYS LOADED — ~50 lines)
+├── Course name, ID, module count
+├── Per-module: name, position, item count, topic keywords
+├── "This course has 4 modules covering: context, architecture, memory, QA"
+│
+├── Trigger: "deadlines/due dates/assignments"
+│   └── Load: assignment index (titles + due dates, ~20 lines)
+│       └── Trigger: specific assignment asked about
+│           └── Fetch: full assignment description (markdown, ~100 lines)
+│
+├── Trigger: "syllabus/policies/grading/late work"
+│   └── Fetch: syllabus (markdown, ~200 lines)
+│
+├── Trigger: "module structure/prerequisites/what's in week N"
+│   └── Load: module index (names + prerequisites + item titles, ~30 lines)
+│       └── Trigger: specific module content
+│           └── Fetch: individual items in that module
+│
+├── Trigger: "specific page/reading/instruction"
+│   └── Load: page index (titles + URLs, ~15 lines)
+│       └── Fetch: specific page content
+│
+└── Trigger: "announcements/updates"
+    └── Fetch: last 5 announcements
+```
+
+### How It Works In Practice
+
+```
+Student: "What's the late policy?"
+
+Agent reads manifest (already in context, ~50 lines):
+  → Matches trigger: "policies/grading/late work" → syllabus
+  → Fetches: canvas-ai syllabus --course 407700
+  → Reads ~200 lines of markdown
+  → Answers from the relevant section
+
+Total context used: ~250 lines (manifest + syllabus)
+NOT loaded: assignments, pages, modules, announcements (~40,000 tokens saved)
+```
+
+```
+Student: "What's due this week?"
+
+Agent reads manifest (already in context):
+  → Matches trigger: "deadlines/due dates" → assignment index
+  → Fetches: canvas-ai assignments --course 407700 --due-this-week
+  → Reads ~10 lines of results
+  → Answers with date-sorted list
+
+Total context used: ~60 lines
+```
+
+```
+Student: "What concepts from Module 2 do I need for Module 4?"
+
+Agent reads manifest (already in context):
+  → Matches trigger: "prerequisites/module structure" → module index
+  → Fetches: canvas-ai modules --course 407700
+  → Reads module index, sees Module 4 prerequisites include Module 2
+  → Fetches Module 2 and Module 4 content for concept comparison
+  → Answers with specific concept connections
+
+Total context used: ~150 lines (manifest + module index + 2 module contents)
+```
+
+### The Manifest IS the Top-Level Trigger Document
+
+For the extension model, the manifest is generated by `canvas-ai manifest --course 407700` and cached locally. For the fork model, it's a PostgreSQL view (`ai_course_manifest`). Either way, it's the ~50 lines that stay in the agent's context and route all queries.
+
+```markdown
+# Course Manifest: CSE 290R Applied AI (407700)
+# Last indexed: 2026-05-04T22:00:00Z
+
+## Modules (4 published)
+
+| # | Module | Topics | Items | Prerequisites |
+|---|--------|--------|-------|---------------|
+| 1 | Context & Efficiency | brownfield, greenfield, context window, context management | 8 | none |
+| 2 | Architectural State | memory, caching, technical debt, AI state management | 8 | Module 1 |
+| 3 | Memory & Implementation | STM/LTM, purging, vector vs graph, agent memory, feature implementation | 7 | Module 2 |
+| 4 | Quality Assurance | QA, unit testing, TDD, red-green-refactor | 6 | Module 3 |
+
+## Content Summary
+
+| Type | Count | Fetch Command |
+|------|-------|--------------|
+| Assignments | 19 | `canvas-ai assignments --course 407700` |
+| Pages | 4 | `canvas-ai pages --course 407700` |
+| Announcements | ~5 | `canvas-ai announcements --course 407700` |
+| Files | varies | `canvas-ai files --course 407700` |
+| Syllabus | 1 | `canvas-ai syllabus --course 407700` |
+
+## Query Routing
+
+| Student asks about... | Fetch |
+|----------------------|-------|
+| Due dates, deadlines, assignments | `canvas-ai assignments --course 407700 --due-this-week` |
+| Policies, grading, late work | `canvas-ai syllabus --course 407700` |
+| Module content, prerequisites | `canvas-ai modules --course 407700` then specific items |
+| Specific page or reading | `canvas-ai page --course 407700 --title "QUERY"` |
+| Recent announcements | `canvas-ai announcements --course 407700 --limit 5` |
+| Search everything | `canvas-ai search --course 407700 --query "QUERY"` |
+```
+
+~50 lines. Loaded once. Routes every query to the right fetch command. The agent never loads content it doesn't need.
+
+### Extension vs Fork: Same Pattern, Different Backend
+
+| Component | Extension Model | Fork Model |
+|-----------|----------------|-----------|
+| Manifest source | `canvas-ai manifest` CLI (cached JSON) | `SELECT * FROM ai_course_manifest WHERE course_id = ?` |
+| Trigger routing | Agent reads manifest, picks fetch command | Agent reads manifest view, picks query |
+| Content fetch | CLI subcommand → API → html2text → markdown | `SELECT * FROM ai_course_pages WHERE course_id = ?` (already markdown in view) |
+| Second-level triggers | Sub-manifests per module (cached) | Module-specific views |
+| Freshness | Re-run `canvas-ai manifest` periodically | View always reflects current DB state |
+
+The progressive disclosure pattern is identical. The backend differs.
+
+---
+
+## Part 13: The Universal Requirement — System Prompt + Progressive Disclosure
+
+### This Is the Same Architecture Regardless of Backend
+
+No matter the model (extension or fork), the course agent needs the same context architecture:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  System Prompt (STATIC — loaded every request)              │
+│  ├── Agent identity + role + guardrails                     │
+│  ├── Course manifest (~50 lines)                            │
+│  │   ├── Module list with topic keywords                    │
+│  │   ├── Content type counts                                │
+│  │   └── Query routing table (trigger hierarchy)            │
+│  └── Fetch instructions (which tool/command to use)         │
+│                                                             │
+│  Dynamic Context (LOADED ON DEMAND via triggers)            │
+│  ├── Level 1: Content indexes (assignment list, page list)  │
+│  ├── Level 2: Specific content (one assignment, one page)   │
+│  └── Level 3: Deep detail (rubric, discussion replies)      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### This Maps Directly to Our Entity System
+
+| Entity System Component | Course Agent Equivalent |
+|-------------------------|------------------------|
+| `CLAUDE.md` (system prompt) | Course agent system prompt + manifest |
+| Triggers table in CLAUDE.md | Query routing table ("deadlines" → fetch assignments) |
+| Rule groups (`.0agnostic/02_rules/groups/`) | Content category sub-indexes (assignment index, page index) |
+| Individual rules (loaded on demand) | Individual content items (fetched on demand) |
+| `.0agnostic/01_knowledge/` (on-demand Read) | Course content fetched via CLI or SQL views |
+| Progressive disclosure spectrum | Manifest (~1 line/item) → index (~5 lines/item) → full content (~100 lines) |
+
+### What Gets Built (Both Models)
+
+1. **Course agent system prompt template** — reusable across any course. Contains:
+   - Agent identity (role, guardrails, FERPA rules)
+   - Slot for course manifest (generated per-course)
+   - Fetch instruction set (CLI subcommands or SQL views)
+   - Trigger hierarchy template
+
+2. **Manifest generator** — produces the ~50 line course manifest:
+   - Extension: `canvas-ai manifest --course 407700`
+   - Fork: `SELECT * FROM ai_course_manifest WHERE course_id = 407700`
+
+3. **Content fetcher with HTML→markdown** — retrieves and converts on demand:
+   - Extension: CLI subcommands piping through `html2text`
+   - Fork: PostgreSQL views with `html_to_markdown()` built in
+
+4. **Trigger hierarchy rules** — routes queries to the right content:
+   - Can be generated by the agent orchestrator based on course content analysis
+   - Or hand-written as a template that works for most courses
+
+### The Progressive Disclosure Chain for a Course
+
+```
+Most compressed ────────────────────────────────────── Most detailed
+System prompt      Manifest         Content index      Full content
+(agent identity)   (~1 line/item)   (~5 lines/item)    (~100 lines/item)
+
+"CSE 290R has      "Module 3:       "Lab 3.2:          Full assignment
+4 modules about    Memory &         Agent Driven       description with
+context, arch,     Implementation,  Implementation,    rubric, all
+memory, QA"        7 items, prereq: due 5/9, 30 pts,  sections, template
+                   Module 2"        online_text_entry"  code, requirements"
+```
+
+Agent stops at whatever depth answers the question. "How many modules?" → manifest. "What's Lab 3.2 about?" → content index. "Show me the full Lab 3.2 requirements" → full content.
+
+---
+
+## Part 14: Implementation Plan for Lab 3.2
 
 ### What We'll Build
 
