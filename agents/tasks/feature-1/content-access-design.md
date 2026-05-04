@@ -139,6 +139,50 @@ ORDER BY a.due_date
 
 ---
 
+## Codebase Findings: How Canvas Actually Stores Content
+
+Since we have the Canvas fork, we looked at the source code directly. This changes the design options.
+
+### Storage Pattern
+
+| Content Type | Model | Storage | Content Field |
+|-------------|-------|---------|---------------|
+| Syllabus | `Course` | DB (TEXT, 16MB max) | `syllabus_body` (HTML) |
+| Assignments | `Assignment` | DB | `description` (HTML) + `due_at`, `points_possible` |
+| Pages | `WikiPage` | DB | `body` (HTML) + `url` (slug) |
+| Discussions | `DiscussionTopic` | DB | `message` (HTML) |
+| Announcements | `Announcement` (STI) | DB | Inherits from DiscussionTopic, `type='Announcement'` |
+| Files | `Attachment` | DB metadata + S3/disk | `filename`, `content_type`, `instfs_uuid` |
+| Module structure | `ContextModule` | DB | `name`, `prerequisites` (serialized), `completion_requirements` |
+| Module items | `ContentTag` | DB | **Polymorphic**: `content_id` + `content_type` → any model above |
+
+### The ContentTag Pattern (Critical)
+
+`ContentTag` is the polymorphic join table that makes modules work. A single content_tag can point to Assignment, WikiPage, DiscussionTopic, Attachment, ExternalUrl, Quiz, LTI Tool, or a SubHeader. This is how Canvas achieves "put anything in a module."
+
+### Existing AI Models (Canvas 2026)
+
+Canvas already added AI features we can extend:
+
+| Model | Purpose | Key Design |
+|-------|---------|-----------|
+| `AiExperience` | AI learning tool in a course | Has `context_files` (attachments), `learning_objective`, `llm_conversation_context_id` |
+| `AiConversation` | Student ↔ AI chat | Links `user_id` + `course_id` + `ai_experience_id` |
+| `AiExperienceContextFile` | Files for AI context | Join table: `ai_experience_id` → `attachment_id` with `llm_conversation_service_document_id` |
+
+### Fork-Specific Options (Not Available via API Alone)
+
+Because we own the fork, we can:
+
+1. **Add a server-side export endpoint**: `GET /api/v1/courses/:id/ai_export` — Rails resolves all ContentTags, converts HTML→markdown, bundles everything in one response. Zero N+1 queries.
+2. **Add a Rake task**: `rake canvas:ai_export[course_id,output_dir]` — dumps course content directly from the database to a filesystem directory.
+3. **Extend AiExperience**: Canvas's existing AI model already links courses to AI-ready content files. We could extend this to auto-index all course content.
+4. **Add a virtual filesystem controller**: A Rails controller that presents course content as navigable paths (e.g., `GET /courses/:id/fs/modules/week-1/assignments/lab-3.md`).
+
+These options are MORE efficient than the REST API because they bypass the N+1 API call problem — the server resolves everything in one query chain.
+
+---
+
 ## Recommended Architecture: Hybrid (D + A + G)
 
 Based on the research, the best approach combines three layers:
@@ -185,10 +229,67 @@ Based on the research, the best approach combines three layers:
 
 ### Implementation Order for Lab 3.2
 
-1. **Build `canvas` CLI** — thin wrapper around Canvas REST API with subcommands
-2. **Implement `canvas sync`** — exports course content to filesystem
-3. **The filesystem IS the content directory** — agent reads with general tools
-4. **Knowledge graph** — already exists in our system (125 concepts, Apache AGE)
+Since we own the Canvas fork, we can build server-side rather than client-side:
+
+1. **Add `rake canvas:ai_export` task** — server-side export that resolves ContentTags, converts HTML→markdown, writes to a course directory. One command, zero N+1 API calls.
+2. **The exported filesystem IS the content directory** — agent reads with general Read/Grep tools.
+3. **Optional: Add `/api/v1/courses/:id/ai_export` endpoint** — same logic as rake task but accessible via HTTP for remote agents.
+4. **Knowledge graph** — already exists in our system (125 concepts, Apache AGE). Future: auto-populate from exported content.
+
+### Why Server-Side Export > Client-Side API Sync
+
+| Factor | Client-side (API calls) | Server-side (Rake/endpoint) |
+|--------|------------------------|---------------------------|
+| API calls | N+1 (one per module item) | 0 (direct DB queries) |
+| Auth | Needs API token | Runs on server with DB access |
+| HTML→MD conversion | Client must parse HTML | Server can use existing Rails helpers |
+| ContentTag resolution | Must follow polymorphic links via API | Can eager-load with `.includes()` |
+| Speed | Minutes (dozens of API calls) | Seconds (few DB queries) |
+| FERPA filtering | Client must check `published` | Server applies `workflow_state` scope |
+
+---
+
+---
+
+## Two Product Tiers: Extension vs Fork (The Cursor Pattern)
+
+This is the same architectural decision Cursor faced with VS Code. Cursor couldn't build its AI features as just an extension — it needed to fork VS Code and modify the editor itself. We face the same choice:
+
+### Tier 1: Extension Model — Works with ANY Canvas Instance
+
+No fork required. Any instructor at any school can use this today.
+
+| Component | How It Works | Limitation |
+|-----------|-------------|-----------|
+| CLI wrapper | Calls Canvas REST API externally | N+1 API calls, rate limited |
+| Filesystem sync | Client-side: API → local markdown | Stale data between syncs |
+| MCP tools (existing) | canvas-mcp talks to any Canvas via API token | 40+ tools = noise problem |
+| Knowledge graph | Built from exported content | Must re-export to refresh |
+
+**Who uses this**: Individual instructors, small deployments, schools that won't install custom software. "Just give me a tool I can run against my existing Canvas."
+
+### Tier 2: Fork Model — Requires Our Canvas Fork
+
+Architectural changes to Canvas itself. More powerful, but schools must deploy our fork.
+
+| Component | How It Works | Advantage over Tier 1 |
+|-----------|-------------|----------------------|
+| Server-side export | Rake task or API endpoint, direct DB queries | No N+1, seconds vs minutes |
+| Virtual filesystem controller | Rails serves course content as navigable paths | Always fresh, no sync |
+| Extended AI models | Build on existing `AiExperience` / `AiConversation` | Native Canvas integration |
+| Content indexing | Server-side embedding pipeline, auto-updates | No client-side infrastructure |
+| FERPA enforcement | Server-side scope filtering at query time | Guaranteed, not client-dependent |
+
+**Who uses this**: Schools that deploy our fork (like how schools deploy their own Canvas instances today). "We want AI-native Canvas."
+
+### What Should We Build for Lab 3.2?
+
+**Both.** Start with Tier 1 (CLI + sync) because it's universally usable and demonstrates the concept. Then add the Tier 2 server-side export as a bonus that shows what's possible with the fork. The PR and evidence doc can show both approaches.
+
+This is also good for the course because:
+- Tier 1 shows we understand the API and can build client-side tools
+- Tier 2 shows we understand the codebase internals and can modify the fork
+- The comparison demonstrates architectural thinking about extension vs fork tradeoffs
 
 ---
 
