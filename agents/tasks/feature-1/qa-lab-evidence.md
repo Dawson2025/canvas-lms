@@ -34,6 +34,30 @@ PostgreSQL views that make Canvas course content accessible to AI agents with FE
 
 **Result**: 12/12 PASS
 
+### Edge Case Tests (14 additional)
+
+**File**: `tools/ai-content-access/test_edge_cases.sql`
+**Test command**: `psql -d canvas_ai_test -f tools/ai-content-access/test_edge_cases.sql`
+
+| # | Test Name | Type | Outcome |
+|---|-----------|------|---------|
+| 13 | NULL description handled | NULL safety | **PASS** |
+| 14 | Empty string description handled | Empty input | **PASS** |
+| 15 | Large HTML stripped (20KB → 6.5KB, 32%) | Performance | **PASS** |
+| 16 | NULL due_at handled (undated assignment) | NULL safety | **PASS** |
+| 17 | Deleted assignments hidden | Security | **PASS** |
+| 18 | NULL page body handled | NULL safety | **PASS** |
+| 19 | HTML entities decoded (<, &, "hello") | Data quality | **PASS** |
+| 20 | Empty module visible with no items | Structural (LEFT JOIN) | **PASS** |
+| 21 | Deleted module hidden | Security | **PASS** |
+| 22 | Regular discussion excluded from announcements | Type discrimination | **PASS** |
+| 23 | Empty course manifest shows zeros | Empty state | **PASS** |
+| 24 | Unified search returns multiple content types | Cross-type | **PASS** |
+| 25 | Manifest counts correct after inserts | Aggregation accuracy | **PASS** |
+| 26 | Views are idempotent | Idempotency | **PASS** |
+
+**Combined result**: 26/26 PASS (12 core + 14 edge cases)
+
 ### Test Coverage Analysis
 
 | Category | Tests | Coverage |
