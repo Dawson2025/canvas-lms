@@ -154,13 +154,50 @@ def llm_answer(question, course_id):
     name = (row1(f"SELECT course_name FROM ai_course_manifest WHERE course_id = {cid(course_id)}")
             or {}).get("course_name", "this course")
     ctx = build_course_context(course_id)
-    prompt = (SYS_PROMPT % (name, ctx)) + f"\n\nStudent question: {question}\n\nAnswer:"
-    out = subprocess.run(["claude", "-p", "--model", LLM_MODEL],
-                         input=prompt, capture_output=True, text=True, timeout=LLM_TIMEOUT)
-    text = (out.stdout or "").strip()
-    if out.returncode != 0 or not text:
-        raise RuntimeError(out.stderr.strip()[:200] or "empty LLM response")
+    system = SYS_PROMPT % (name, ctx)
+    text = _call_llm(system, f"Student question: {question}")
+    if not text:
+        raise RuntimeError("empty LLM response")
     return {"answer": text, "sources": ["ai_course_* views (Claude)"]}
+
+
+def _call_llm(system, user):
+    """Pluggable LLM backend, picked by env (stdlib only, no pip):
+    1. ANTHROPIC_API_KEY  -> Anthropic Messages API (works on a headless server)
+    2. LLM_API_BASE+KEY   -> any OpenAI-compatible endpoint (Groq/OpenRouter/...)
+    3. otherwise          -> local `claude` CLI (Claude Code auth)
+    """
+    import urllib.request
+    ak = os.environ.get("ANTHROPIC_API_KEY")
+    if ak:
+        model = os.environ.get("AGENT_MODEL_ID", "claude-haiku-4-5-20251001")
+        body = json.dumps({"model": model, "max_tokens": 600, "system": system,
+                           "messages": [{"role": "user", "content": user}]}).encode()
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages", data=body,
+            headers={"x-api-key": ak, "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"})
+        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as r:
+            d = json.load(r)
+        return "".join(b.get("text", "") for b in d.get("content", [])).strip()
+    base = os.environ.get("LLM_API_BASE")
+    if base:
+        key = os.environ.get("LLM_API_KEY", "")
+        model = os.environ.get("AGENT_MODEL_ID", "llama-3.1-8b-instant")
+        body = json.dumps({"model": model, "max_tokens": 600, "messages": [
+            {"role": "system", "content": system}, {"role": "user", "content": user}]}).encode()
+        req = urllib.request.Request(
+            base.rstrip("/") + "/chat/completions", data=body,
+            headers={"Authorization": f"Bearer {key}", "content-type": "application/json"})
+        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT) as r:
+            d = json.load(r)
+        return d["choices"][0]["message"]["content"].strip()
+    out = subprocess.run(["claude", "-p", "--model", LLM_MODEL],
+                         input=system + "\n\n" + user + "\n\nAnswer:",
+                         capture_output=True, text=True, timeout=LLM_TIMEOUT)
+    if out.returncode != 0:
+        raise RuntimeError(out.stderr.strip()[:200] or "claude CLI failed")
+    return (out.stdout or "").strip()
 
 
 def answer(question, course_id):
