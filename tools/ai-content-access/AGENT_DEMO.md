@@ -59,3 +59,21 @@ grounded answer + source view
 The agent never reads raw Canvas tables — only the views, which enforce the
 FERPA boundary in the database. Swap the templated answer step for an LLM call
 and the same retrieval layer powers a fully conversational agent.
+
+## Correlating the agent to real Canvas (side-by-side demo)
+
+Open two headed windows: the agent (`localhost:8742`) and the real Canvas
+course (`byui.instructure.com/courses/407700`). Ask the agent, then show the
+same content live in Canvas — proving the agent reads the real course.
+
+| Ask the agent | Show in Canvas | What it proves |
+|---------------|----------------|----------------|
+| "What's the late policy?" | Syllabus → *Late Policy* section | Same text, pulled from `ai_course_syllabus` |
+| "What's the grading weight?" | Syllabus → *Grading* table | Agent extracts the same weights |
+| "Show me the modules" | Modules page (Brownfield Weeks 1-4) | Agent lists the same 4 modules, in order |
+| "Any recent announcements?" | Announcements (e.g. *Presentations Today*) | Agent surfaces the same announcements |
+| "Is there a secret draft exam?" | (nothing to show — it's unpublished) | FERPA: the agent can't see what Canvas hides from students |
+
+The last row is the key point: the agent only ever sees **published/active**
+content, because the views enforce that filter in the database — exactly what a
+student-facing assistant must do.
