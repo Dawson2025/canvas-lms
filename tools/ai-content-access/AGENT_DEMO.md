@@ -5,6 +5,16 @@ A working **class agent**: a student asks a question, the agent answers using
 This is the "interface layer" from `feature-1.md` made real — the views feed the
 agent; the agent answers.
 
+The agent is **conversational and LLM-backed**: it loads the course content from
+the views as grounding context and answers via the `claude` CLI in print mode
+(`claude -p`, the subprocess pattern from `feature-1.md`). It can summarize the
+course, chat generally, and answer specifics — but only from published content,
+so it won't invent policies or reveal unpublished material. If the LLM is
+unavailable (offline / not authed) it falls back to a deterministic keyword
+router over the same views, so the demo never dies.
+
+Tunables: `AGENT_MODEL` (default `haiku`), `AGENT_TIMEOUT` (default `45`s).
+
 ## Prerequisites
 
 ```bash
