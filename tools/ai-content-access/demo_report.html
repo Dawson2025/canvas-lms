@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvas AI Content Access — Demo</title>
+<style>
+  :root { --bg:#0f1419; --panel:#1a2230; --ink:#e6edf3; --muted:#9bb0c3;
+           --accent:#4fc3f7; --good:#3fb950; --bad:#f85149; --line:#2a3646; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+          font:16px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  header { padding:28px 40px; background:linear-gradient(135deg,#16202e,#0f1419);
+            border-bottom:1px solid var(--line); }
+  h1 { margin:0 0 4px; font-size:28px; }
+  .sub { color:var(--muted); font-size:15px; }
+  main { max-width:1080px; margin:0 auto; padding:32px 40px 80px; }
+  section { margin:0 0 36px; }
+  h2 { font-size:20px; border-left:4px solid var(--accent); padding-left:12px; margin:0 0 14px; }
+  .lead { color:var(--muted); margin:0 0 14px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px 20px; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th,td { border:1px solid var(--line); padding:7px 10px; text-align:left; vertical-align:top; }
+  th { background:#202b3b; color:var(--muted); font-weight:600; }
+  .ba { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  pre { background:#0b0f14; border:1px solid var(--line); border-radius:8px; padding:14px;
+         overflow:auto; font:13px/1.5 ui-monospace,Menlo,Consolas,monospace; margin:0;
+         white-space:pre-wrap; max-height:340px; }
+  .tag { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px; }
+  .raw .tag { color:#e3a008; }
+  .clean .tag { color:var(--good); }
+  .banner { border-radius:8px; padding:10px 14px; font-weight:600; margin-top:12px; }
+  .banner.good { background:rgba(63,185,80,.14); color:var(--good); border:1px solid var(--good); }
+  .banner.bad { background:rgba(248,81,73,.14); color:var(--bad); border:1px solid var(--bad); }
+  ul.tests { list-style:none; padding:0; margin:0; columns:2; column-gap:28px; }
+  ul.tests li { break-inside:avoid; padding:3px 0; font-size:13.5px; }
+  .tests .mark { font-weight:700; }
+  .tests .pass .mark { color:var(--good); }
+  .tests .fail .mark { color:var(--bad); }
+  .scorebar { display:inline-block; background:var(--good); color:#04210d; font-weight:800;
+               border-radius:999px; padding:6px 18px; font-size:18px; margin-bottom:14px; }
+  .scorebar.bad { background:var(--bad); color:#2a0606; }
+  footer { color:var(--muted); font-size:13px; border-top:1px solid var(--line);
+            padding:18px 40px; text-align:center; }
+</style></head>
+<body>
+<header>
+  <h1>Canvas AI Content Access</h1>
+  <div class="sub">Brownfield feature · CSE 290R · PostgreSQL views that serve Canvas course
+  content to AI agents as clean, FERPA-safe markdown — no Rails app required</div>
+</header>
+<main>
+
+<section>
+  <h2>1 · Course manifest</h2>
+  <p class="lead">One compact row an agent loads into its system prompt — counts of every content type.</p>
+  <div class="panel"><table><tr><th>Course</th><td>CSE 290R — Applied AI for Software Engineering (id 407700)</td></tr><tr><th>Modules</th><td>4</td></tr><tr><th>Assignments</th><td>4</td></tr><tr><th>Pages</th><td>2</td></tr><tr><th>Announcements</th><td>2</td></tr><tr><th>Files</th><td>2</td></tr></table></div>
+</section>
+
+<section>
+  <h2>2 · Before / After — raw Canvas HTML → agent-ready markdown</h2>
+  <p class="lead">The same field (<code>Lab 3.2</code> description), as stored vs. as the view returns it.
+  The <code>strip_html_tags()</code> SQL function does the conversion in the database.</p>
+  <div class="ba">
+    <div class="panel raw"><div class="tag">Raw · assignments.description</div><pre>&lt;div style=&quot;font-family:Georgia;font-size:17px;&quot;&gt;&lt;h1 style=&quot;font-size:2rem;&quot;&gt;Lab 3.2: Agent Driven Feature Implementation&lt;/h1&gt;&lt;p&gt;You will begin implementing the Canvas feature you scoped and planned.&lt;/p&gt;&lt;h2&gt;Goal&lt;/h2&gt;&lt;ol&gt;&lt;li&gt;Plans as source of truth&lt;/li&gt;&lt;li&gt;Implementation agent: agents/feature-implementation.md&lt;/li&gt;&lt;li&gt;Board workflow via MCP&lt;/li&gt;&lt;/ol&gt;&lt;h2&gt;Repository layout&lt;/h2&gt;&lt;table&gt;&lt;tr&gt;&lt;th&gt;Path&lt;/th&gt;&lt;th&gt;Purpose&lt;/th&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td&gt;agents/feature-implementation.md&lt;/td&gt;&lt;td&gt;Agent spec&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td&gt;agents/tasks/feature-1/implementation-evidence.md&lt;/td&gt;&lt;td&gt;Evidence pack&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;&lt;/div&gt;</pre></div>
+    <div class="panel clean"><div class="tag">Clean · ai_course_assignments.description_clean</div><pre># Lab 3.2: Agent Driven Feature Implementation
+
+You will begin implementing the Canvas feature you scoped and planned.
+## Goal
+
+- Plans as source of truth
+- Implementation agent: agents/feature-implementation.md
+- Board workflow via MCP
+## Repository layout
+
+ | **Path**  | **Purpose** 
+ | agents/feature-implementation.md | Agent spec
+ | agents/tasks/feature-1/implementation-evidence.md | Evidence pack</pre></div>
+  </div>
+</section>
+
+<section>
+  <h2>3 · FERPA safety — enforced in the database</h2>
+  <p class="lead">An <strong>unpublished</strong> "SECRET DRAFT EXAM" row exists in the table.
+  The view filters to published/active content only, so an agent literally cannot see it.</p>
+  <div class="ba">
+    <div class="panel raw"><div class="tag">Raw table — row exists</div>
+      <table><thead><tr><th>id</th><th>title</th><th>workflow_state</th></tr></thead><tbody><tr><td>99999</td><td>SECRET DRAFT EXAM</td><td>unpublished</td></tr></tbody></table></div>
+    <div class="panel clean"><div class="tag">Through AI view — empty</div>
+      <pre>(0 rows)</pre></div>
+  </div>
+  <div class="banner good">✓ FERPA-safe: the unpublished row is INVISIBLE through the AI view</div>
+</section>
+
+<section>
+  <h2>4 · Unified content search</h2>
+  <p class="lead"><code>ai_course_content</code> UNIONs assignments, pages, and announcements into one surface.</p>
+  <div class="panel"><table><thead><tr><th>type</th><th>title</th><th>clean preview</th></tr></thead><tbody><tr><td>announcement</td><td>Welcome to CSE 290R!</td><td></td></tr><tr><td>Welcome to Applied AI for Software Engineering. Please revi</td></tr><tr><td>announcement</td><td>Lab 3.1 Submission Reminder</td><td></td></tr><tr><td>Remember to submit Lab 3.1 by Tuesday 11:59 PM. Include you</td></tr><tr><td>assignment</td><td>Prepare: 3.2 - Status</td><td></td></tr><tr><td>This is a **graded survey**: you receive credit for thought</td></tr><tr><td>assignment</td><td>Prepare: 4.1 - Quality Assurance</td><td></td></tr><tr><td>Review definitions for QA, unit testing, TDD.</td></tr><tr><td>**Unlimited a</td></tr><tr><td>assignment</td><td>Lab 3.2: Agent Driven Feature Implementation</td><td></td></tr><tr><td># Lab 3.2: Agent Driven Feature Implementation</td></tr><tr><td>You will be</td></tr><tr><td>assignment</td><td>Lab 4.1: Quality Assurance</td><td></td></tr><tr><td># Lab 4.1: Quality Assurance</td></tr><tr><td>Add a dedicated QA agent alon</td></tr><tr><td>page</td><td>Instruction 1.2: Agents</td><td></td></tr><tr><td># Instruction 1.2: Agents</td></tr><tr><td>## Definitions</td></tr><tr><td>**Agents**: AI s</td></tr><tr><td>page</td><td>Instruction 2.1: Feature Planning</td><td></td></tr><tr><td># Instruction 2.1: Feature Planning</td></tr><tr><td>## Definitions</td></tr><tr><td>**Feat</td></tr></tbody></table></div>
+</section>
+
+<section>
+  <h2>5 · Module structure, items resolved</h2>
+  <p class="lead">Module + its content_tag items, joined in the view — no agent-side SQL needed.</p>
+  <div class="panel"><table><thead><tr><th>module</th><th>pos</th><th>content_type</th><th>item</th></tr></thead><tbody><tr><td>Brownfield - Week 3</td><td>1</td><td>ContextModuleSubHeader</td><td>Day 5 - Memory</td></tr><tr><td>Brownfield - Week 3</td><td>2</td><td>Assignment</td><td>Prepare: 3.2 - Status</td></tr><tr><td>Brownfield - Week 3</td><td>3</td><td>Assignment</td><td>Lab 3.2: Agent Driven Feature Implementation</td></tr></tbody></table></div>
+</section>
+
+<section>
+  <h2>6 · Tests — AAA pattern, run live</h2>
+  <div class="scorebar">26 passed · 0 failed</div>
+  <div class="panel">
+    <div class="tag">Core view tests (12)</div><ul class="tests"><li class="pass"><span class="mark">✓</span> Unpublished assignment correctly hidden</li><li class="pass"><span class="mark">✓</span> All 4 published assignments visible</li><li class="pass"><span class="mark">✓</span> HTML tags stripped from assignment description</li><li class="pass"><span class="mark">✓</span> Syllabus accessible, cleaned, contains Late Policy</li><li class="pass"><span class="mark">✓</span> All 4 modules visible</li><li class="pass"><span class="mark">✓</span> Week 3 prerequisite chain preserved (requires Week 2)</li><li class="pass"><span class="mark">✓</span> 2 announcements visible, HTML cleaned</li><li class="pass"><span class="mark">✓</span> Found content matching &quot;Quality Assurance&quot;</li><li class="pass"><span class="mark">✓</span> Manifest counts correct (4 assignments, 4 modules, 2 announcements)</li><li class="pass"><span class="mark">✓</span> 2 pages visible, HTML cleaned, wiki join works</li><li class="pass"><span class="mark">✓</span> Date filtering on ai_course_assignments works (found 0 due this week)</li><li class="pass"><span class="mark">✓</span> 2 files visible</li></ul>
+    <div class="tag" style="margin-top:14px">Edge-case tests (14)</div><ul class="tests"><li class="pass"><span class="mark">✓</span> NULL description returns NULL (no crash)</li><li class="pass"><span class="mark">✓</span> Empty description handled gracefully</li><li class="pass"><span class="mark">✓</span> Large HTML stripped (original=20512 bytes, cleaned=6500 bytes, 32% of original)</li><li class="pass"><span class="mark">✓</span> Assignment with NULL due_at visible and queryable</li><li class="pass"><span class="mark">✓</span> Deleted assignment correctly hidden</li><li class="pass"><span class="mark">✓</span> Page with NULL body returns NULL (no crash)</li><li class="pass"><span class="mark">✓</span> HTML entities decoded (&lt;, &amp;, &quot;hello&quot;)</li><li class="pass"><span class="mark">✓</span> Empty module visible, no items (LEFT JOIN works)</li><li class="pass"><span class="mark">✓</span> Deleted module correctly hidden</li><li class="pass"><span class="mark">✓</span> Regular discussion correctly excluded from announcements view</li><li class="pass"><span class="mark">✓</span> Empty course manifest shows all zeros</li><li class="pass"><span class="mark">✓</span> Unified search returns multiple content types (3 types found)</li><li class="pass"><span class="mark">✓</span> Manifest counts correct after edge case inserts (8 assignments, 5 modules, 4 pages, 2 announcements)</li><li class="pass"><span class="mark">✓</span> Views are idempotent (same result on repeat query)</li></ul>
+  </div>
+</section>
+
+</main>
+<footer>8 views + 1 SQL function · ~516 lines of SQL · deploys on the fork as a read-only Rails migration ·
+generated live from PostgreSQL database <code>cse290r_ai_demo</code></footer>
+</body></html>
