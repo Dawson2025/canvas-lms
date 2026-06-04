@@ -29,8 +29,9 @@ if [ "${1:-}" != "--no-build" ]; then
   psql -d postgres -q -c "CREATE DATABASE $DB;"
   "${PSQL[@]}" -q -f "$DIR/setup_test_schema.sql"
   "${PSQL[@]}" -q -f "$DIR/seed_test_data.sql"
+  [ -f "$DIR/seed_ai_society.sql" ] && "${PSQL[@]}" -q -f "$DIR/seed_ai_society.sql"
   "${PSQL[@]}" -q -f "$DIR/create_ai_views.sql"
-  c_note "Loaded: Canvas schema + seed data (real CSE 290R course 407700) + 8 AI views + strip_html_tags()."
+  c_note "Loaded: Canvas schema + seed data (CSE 290R 407700 + AI Society 415990) + 8 AI views + strip_html_tags()."
 fi
 
 c_title "=================================================================="
