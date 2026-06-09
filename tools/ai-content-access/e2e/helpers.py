@@ -4,22 +4,9 @@ These functions wrap the raw Playwright `Page` with intent-named operations
 (`login`, `open_course`, `enable_course_ai_assistant`, `ask_assistant`, ...) so
 the spec in ``test_course_ai_assistant.py`` reads like the user story.
 
-IMPORTANT — SELECTOR CONFIRMATION
----------------------------------
-Canvas is not running while this file is being authored, so the exact DOM is not
-observable. Every place that depends on the live markup is marked with a
-``# TODO(selector):`` comment and, wherever possible, given *several* candidate
-locators tried in order. Confirm/trim these against the running UI:
-
-    DISPLAY=:0 E2E_HEADLESS=0 E2E_SLOW_MO=400 \
-        ~/.local/bin/playwright codegen http://canvas.docker
-
 Design notes
 ------------
 * Locators prefer accessible roles / labels / stable ids over brittle CSS.
-* ``first_visible`` walks a list of candidate locators and returns the first one
-  that is actually visible, so confirming a selector is "delete the wrong
-  candidates" rather than "rewrite the function".
 * The agent tab embeds the assistant in an ``<iframe>``; ``assistant_frame``
   returns a ``FrameLocator`` so callers never poke at the outer document by
   mistake.
@@ -28,7 +15,6 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Iterable
 
 from playwright.sync_api import (
     FrameLocator,
@@ -39,37 +25,6 @@ from playwright.sync_api import (
 )
 
 import config
-
-
-# --------------------------------------------------------------------------- #
-# low-level utilities
-# --------------------------------------------------------------------------- #
-def first_visible(page: Page, selectors: Iterable[str], timeout_ms: int | None = None) -> Locator:
-    """Return the first locator (from ``selectors``) that becomes visible.
-
-    Tries each candidate for a short slice of the overall budget. Raises
-    AssertionError listing everything tried if none appear — which makes a
-    selector that drifted out of date obvious in the failure output.
-    """
-    selectors = list(selectors)
-    budget = timeout_ms if timeout_ms is not None else config.TIMEOUT_MS
-    per = max(750, budget // max(1, len(selectors)))
-    tried: list[str] = []
-    deadline = time.monotonic() + budget / 1000.0
-    while time.monotonic() < deadline:
-        for sel in selectors:
-            tried.append(sel)
-            loc = page.locator(sel).first
-            try:
-                loc.wait_for(state="visible", timeout=per)
-                return loc
-            except PWTimeoutError:
-                continue
-    raise AssertionError(
-        "None of the candidate selectors became visible within "
-        f"{budget} ms. Tried (confirm against live UI):\n  - "
-        + "\n  - ".join(dict.fromkeys(tried))
-    )
 
 
 def screenshot(page: Page, name: str) -> None:
@@ -99,39 +54,16 @@ def login(page: Page, email: str | None = None, password: str | None = None) -> 
     if "/login" not in page.url:
         return
 
-    # TODO(selector): Canvas' default login form uses #pseudonym_session_unique_id
-    # and #pseudonym_session_password. Some installs (LDAP/SAML/dev) differ.
-    email_box = first_visible(
-        page,
-        [
-            "#pseudonym_session_unique_id",
-            "input[name='pseudonym_session[unique_id]']",
-            "input[type='email']",
-            "input[name='email']",
-        ],
-    )
+    email_box = page.locator("#pseudonym_session_unique_id")
+    email_box.wait_for(state="visible", timeout=config.TIMEOUT_MS)
     email_box.fill(email)
 
-    pwd_box = first_visible(
-        page,
-        [
-            "#pseudonym_session_password",
-            "input[name='pseudonym_session[password]']",
-            "input[type='password']",
-        ],
-    )
+    pwd_box = page.locator("#pseudonym_session_password")
+    pwd_box.wait_for(state="visible", timeout=config.TIMEOUT_MS)
     pwd_box.fill(password)
 
-    # TODO(selector): default submit button text is "Log In".
-    submit = first_visible(
-        page,
-        [
-            "button:has-text('Log In')",
-            "input[type='submit'][value='Log In']",
-            "#login_form button[type='submit']",
-            "button[type='submit']",
-        ],
-    )
+    submit = page.locator("#login_form input[type='submit'][value='Log In']")
+    submit.wait_for(state="visible", timeout=config.TIMEOUT_MS)
     with page.expect_navigation(wait_until="domcontentloaded", timeout=config.NAV_TIMEOUT_MS):
         submit.click()
 
@@ -160,8 +92,6 @@ def open_course(page: Page) -> str:
                   wait_until="domcontentloaded")
     else:
         page.goto(f"{config.BASE_URL}/courses", wait_until="domcontentloaded")
-        # TODO(selector): /courses renders a table of enrolled/all courses with
-        # links of the form <a href="/courses/123">Name</a>.
         if config.COURSE_NAME:
             link = page.get_by_role("link", name=re.compile(re.escape(config.COURSE_NAME), re.I)).first
         else:
@@ -188,121 +118,9 @@ def _course_id_from_url(url: str) -> str | None:
 # 3. enable the "Course AI Assistant" feature
 # --------------------------------------------------------------------------- #
 def enable_course_ai_assistant(page: Page, course_id: str) -> None:
-    """Turn on the Course AI Assistant for the given course.
-
-    Two common shapes are handled:
-      A) a Course **Feature Flag** toggled on /courses/<id>/settings under the
-         "Feature Options" / "Feature Previews" tab; and
-      B) a course-navigation item that is *hidden by default* and dragged/enabled
-         on the Navigation tab of course settings.
-
-    Confirm which mechanism the fork actually uses and keep that branch.
-    """
-    page.goto(f"{config.BASE_URL}/courses/{course_id}/settings",
-              wait_until="domcontentloaded")
-
-    # --- (A) Feature Option toggle ------------------------------------------
-    # TODO(selector): open the Feature Options tab. Canvas uses an anchor
-    # "#tab-features" / a tab labelled "Feature Options" (or "Feature Previews").
-    feature_tab = page.get_by_role(
-        "tab", name=re.compile(r"Feature (Options|Previews)", re.I)
-    ).first
-    try:
-        feature_tab.wait_for(state="visible", timeout=4000)
-        feature_tab.click()
-    except PWTimeoutError:
-        # Some themes render plain anchors instead of ARIA tabs.
-        try:
-            page.locator("a[href='#tab-features'], #course_features_tab").first.click(timeout=2000)
-        except PWTimeoutError:
-            pass
-
-    # TODO(selector): each feature row has a heading with the feature name and a
-    # state toggle (a <button> with aria-label like "<Feature> is Off"). The
-    # default display name registered by the fork is assumed to be
-    # "Course AI Assistant". Adjust if the migration registered a different
-    # display_name / feature key.
-    enabled_via_flag = _try_enable_feature_flag(page, config.FEATURE_TAB_NAME)
-
-    if not enabled_via_flag:
-        # --- (B) Navigation tab fallback ------------------------------------
-        _try_enable_navigation_item(page, course_id, config.FEATURE_TAB_NAME)
-
-    screenshot(page, "after-enable")
-
-
-def _try_enable_feature_flag(page: Page, feature_name: str) -> bool:
-    """Attempt the Feature-Option path. Returns True if it looks enabled."""
-    # Find the row/card whose accessible name mentions the feature.
-    # TODO(selector): confirm the toggle control. Canvas modern UI uses a button
-    # whose aria-label flips between "Enabled"/"Disabled"/"Off"/"On".
-    name_re = re.compile(re.escape(feature_name), re.I)
-    candidates = [
-        page.get_by_role("button", name=name_re),
-        page.locator("[role='listitem']").filter(has_text=name_re).get_by_role("button"),
-        page.locator("div").filter(has_text=name_re).get_by_role("button"),
-    ]
-    for ctrl in candidates:
-        ctrl = ctrl.first
-        try:
-            ctrl.wait_for(state="visible", timeout=3000)
-        except PWTimeoutError:
-            continue
-        label = (ctrl.get_attribute("aria-label") or ctrl.inner_text() or "").lower()
-        if any(w in label for w in ("on", "enabled")):
-            return True  # already on
-        # Toggle it on.
-        ctrl.click()
-        # A confirmation menu may appear ("Enabled" option in a popover).
-        try:
-            page.get_by_role("menuitemradio", name=re.compile(r"Enabled|On", re.I)).first.click(
-                timeout=2000
-            )
-        except PWTimeoutError:
-            pass
-        page.wait_for_timeout(500)
-        return True
-    return False
-
-
-def _try_enable_navigation_item(page: Page, course_id: str, item_name: str) -> None:
-    """Attempt the course-navigation path (drag a hidden item into the menu)."""
-    # TODO(selector): the Navigation tab lives at #tab-navigation. Hidden items
-    # sit in a "disabled" list; enable via the kebab menu -> "Enable", or drag
-    # from the lower list to the upper list. Drag-and-drop is fragile; prefer the
-    # menu action if the fork exposes one.
-    try:
-        page.get_by_role("tab", name=re.compile(r"Navigation", re.I)).first.click(timeout=3000)
-    except PWTimeoutError:
-        try:
-            page.locator("a[href='#tab-navigation']").first.click(timeout=2000)
-        except PWTimeoutError:
-            pass
-
-    name_re = re.compile(re.escape(item_name), re.I)
-    row = page.locator("li, tr").filter(has_text=name_re).first
-    try:
-        row.wait_for(state="visible", timeout=4000)
-    except PWTimeoutError:
-        # Nothing to do; either it's already in the nav or the fork auto-shows it
-        # once the feature flag is on. Save the page state so this is debuggable.
-        screenshot(page, "navigation-item-not-found")
-        return
-
-    # Try a kebab/gear menu -> Enable.
-    try:
-        row.get_by_role("button").first.click(timeout=2000)
-        page.get_by_role("menuitem", name=re.compile(r"Enable", re.I)).first.click(timeout=2000)
-    except PWTimeoutError:
-        screenshot(page, "navigation-enable-no-menu")
-
-    # Save the Navigation form.
-    # TODO(selector): the Navigation tab has its own "Save" submit button.
-    try:
-        page.get_by_role("button", name=re.compile(r"^Save$", re.I)).first.click(timeout=3000)
-        page.wait_for_load_state("domcontentloaded")
-    except PWTimeoutError:
-        screenshot(page, "navigation-save-not-found")
+    """Confirm the Course AI Assistant nav item is enabled for the course."""
+    tab = course_nav_tab(page, course_id, config.FEATURE_TAB_NAME)
+    expect(tab).to_be_visible()
 
 
 # --------------------------------------------------------------------------- #
@@ -316,16 +134,8 @@ def course_nav_tab(page: Page, course_id: str, tab_name: str | None = None) -> L
     tab_name = tab_name or config.FEATURE_TAB_NAME
     page.goto(f"{config.BASE_URL}/courses/{course_id}", wait_until="domcontentloaded")
 
-    # TODO(selector): course nav is a <nav id="section-tabs"> with <a> children.
-    name_re = re.compile(re.escape(tab_name), re.I)
-    tab = first_visible(
-        page,
-        [
-            f"#section-tabs a:has-text('{tab_name}')",
-            f"nav a:has-text('{tab_name}')",
-            f"a[role='link']:has-text('{tab_name}')",
-        ],
-    )
+    tab = page.locator("#section-tabs a#course-ai-assistant-link")
+    tab.wait_for(state="visible", timeout=config.TIMEOUT_MS)
     # Sanity: the link should point inside this course.
     href = tab.get_attribute("href") or ""
     assert f"/courses/{course_id}" in href or "/courses/" in href, (
@@ -348,38 +158,11 @@ def open_assistant_tab(page: Page, course_id: str, tab_name: str | None = None) 
 def assistant_frame(page: Page) -> FrameLocator:
     """Return a FrameLocator for the embedded assistant iframe.
 
-    The tab content is rendered by the agent server inside an <iframe>. We don't
-    know its name/id ahead of time, so match generously, then let the caller's
-    interactions confirm we picked the right frame.
+    The tab content is rendered by the agent server inside an <iframe>.
     """
-    # TODO(selector): confirm the iframe attributes. Likely an LTI/tool iframe
-    # (id like "tool_content" / class "tool_launch") or a same-origin app frame
-    # pointing at the agent server (e.g. src*="ai-assistant" or the agent port).
-    candidates = [
-        "iframe#tool_content",
-        "iframe.tool_launch",
-        "iframe[title*='AI' i]",
-        "iframe[src*='ai-assistant' i]",
-        "iframe[src*='assistant' i]",
-        "iframe[name*='assistant' i]",
-        "iframe[data-testid*='assistant' i]",
-        "iframe",  # last resort: the only iframe on the tab page
-    ]
-    last_err: Exception | None = None
-    deadline = time.monotonic() + config.NAV_TIMEOUT_MS / 1000.0
-    while time.monotonic() < deadline:
-        for sel in candidates:
-            try:
-                loc = page.locator(sel).first
-                loc.wait_for(state="attached", timeout=1500)
-                return page.frame_locator(sel)
-            except PWTimeoutError as exc:
-                last_err = exc
-                continue
-    raise AssertionError(
-        "Could not locate the assistant iframe. Confirm the iframe selector "
-        f"against the live tab. Last error: {last_err}"
-    )
+    sel = "iframe[src*='localhost:8742'][title='Course AI Assistant']"
+    page.locator(sel).wait_for(state="attached", timeout=config.NAV_TIMEOUT_MS)
+    return page.frame_locator(sel)
 
 
 def ask_assistant(page: Page, question: str) -> str:
@@ -389,19 +172,8 @@ def ask_assistant(page: Page, question: str) -> str:
     """
     frame = assistant_frame(page)
 
-    # TODO(selector): the chat input. The agent demo UI uses a free-text box and
-    # an "Ask" button; adjust placeholder/role to match.
-    box = _frame_first_visible(
-        page,
-        frame,
-        [
-            "textarea",
-            "input[type='text']",
-            "[contenteditable='true']",
-            "[placeholder*='Ask' i]",
-            "[data-testid='chat-input']",
-        ],
-    )
+    box = frame.locator("#cq")
+    box.wait_for(state="visible", timeout=config.TIMEOUT_MS)
     box.click()
     box.fill(question)
 
@@ -410,59 +182,14 @@ def ask_assistant(page: Page, question: str) -> str:
     answer_sel = _ANSWER_SELECTOR
     before = _safe_count(frame.locator(answer_sel))
 
-    # Submit: prefer an explicit button, fall back to Enter.
-    submitted = False
-    for btn_sel in (
-        "button:has-text('Ask')",
-        "button:has-text('Send')",
-        "button[type='submit']",
-        "[data-testid='chat-send']",
-    ):
-        try:
-            frame.locator(btn_sel).first.click(timeout=1500)
-            submitted = True
-            break
-        except PWTimeoutError:
-            continue
-    if not submitted:
-        box.press("Enter")
+    frame.locator("#cform button").click(timeout=config.TIMEOUT_MS)
 
     # Wait for a new answer bubble to appear and stop changing (LLM stream).
     return _wait_for_answer(frame, answer_sel, before)
 
 
 # The element that holds a rendered assistant answer.
-# TODO(selector): confirm. The demo renders answers as .msg.bot / .answer; an LTI
-# tool may use its own markup. Keep this generous list aligned with the real UI.
-_ANSWER_SELECTOR = ", ".join(
-    [
-        ".msg.bot",
-        ".message.assistant",
-        ".answer",
-        "[data-role='assistant']",
-        "[data-testid='assistant-message']",
-    ]
-)
-
-
-def _frame_first_visible(page: Page, frame: FrameLocator, selectors: Iterable[str]) -> Locator:
-    selectors = list(selectors)
-    per = max(750, config.TIMEOUT_MS // max(1, len(selectors)))
-    tried: list[str] = []
-    deadline = time.monotonic() + config.TIMEOUT_MS / 1000.0
-    while time.monotonic() < deadline:
-        for sel in selectors:
-            tried.append(sel)
-            loc = frame.locator(sel).first
-            try:
-                loc.wait_for(state="visible", timeout=per)
-                return loc
-            except PWTimeoutError:
-                continue
-    raise AssertionError(
-        "No assistant input became visible inside the iframe. Tried:\n  - "
-        + "\n  - ".join(dict.fromkeys(tried))
-    )
+_ANSWER_SELECTOR = ".msg.bot"
 
 
 def _safe_count(loc: Locator) -> int:

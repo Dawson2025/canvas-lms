@@ -4,8 +4,7 @@ User story under test
 ----------------------
 1. An instructor logs into Canvas.
 2. Opens one of their courses.
-3. Enables the "Course AI Assistant" (course feature flag / nav item).
-4. The "Course AI Assistant" tab appears in the course navigation.
+3. Confirms the "Course AI Assistant" tab appears in the course navigation.
 5. Opens that tab (the assistant is embedded via an <iframe>).
 6. Asks "what is due this week?" and gets a grounded, non-empty, course-specific
    answer (drawn from the course's published content).
@@ -22,8 +21,7 @@ How to run
     # or directly with the global pytest/playwright
     BASE_URL=http://canvas.docker python3 -m pytest -v test_course_ai_assistant.py
 
-Canvas must be reachable at BASE_URL. Selectors marked ``# TODO(selector)`` in
-helpers.py must be confirmed against the live UI before this is green.
+Canvas must be reachable at BASE_URL.
 
 The full journey is also expressed as ONE ordered story test
 (``test_full_course_ai_assistant_journey``) so a smoke run is a single command,
@@ -46,7 +44,7 @@ import helpers
 IN_SCOPE_QUESTION = "what is due this week?"
 
 # Clearly outside any single course's published content -> must be declined.
-OUT_OF_SCOPE_QUESTION = "Who won the most recent Super Bowl, and what was the score?"
+OUT_OF_SCOPE_QUESTION = "Who won the 2026 Super Bowl?"
 
 # Generic chatter that should NOT count as a "grounded, course-specific" answer.
 # Used to assert the in-scope answer is more than a greeting/boilerplate.
@@ -67,8 +65,6 @@ def _course_specific_tokens(page: Page, course_id: str) -> list[str]:
     point is to reject a generic "I can help!" non-answer, not to pin exact text.
     """
     tokens: list[str] = []
-    # TODO(selector): course title is usually an <h1>/<h2> in the course header
-    # or the breadcrumb. Grab visible heading text and split into words.
     try:
         heading = page.locator("h1, h2, .course-title, #breadcrumbs .ellipsible").first
         title = (heading.inner_text(timeout=3000) or "").strip()
@@ -97,6 +93,7 @@ def _assert_grounded_answer(answer: str, page: Page, course_id: str) -> None:
     # talks about due dates / deadlines / "this week" in a concrete way, or it
     # plainly states nothing is due (also a valid grounded answer).
     lower = answer.lower()
+    lab_or_date = "lab 4" in lower or re.search(r"\b2026\b", answer)
     due_language = any(
         kw in lower
         for kw in ("due", "deadline", "assignment", "this week", "nothing is due",
@@ -104,9 +101,10 @@ def _assert_grounded_answer(answer: str, page: Page, course_id: str) -> None:
     )
     tokens = _course_specific_tokens(page, course_id)
     course_ref = any(t.lower() in lower for t in tokens if t)
-    assert due_language or course_ref, (
-        "Answer does not look grounded in the course (no due-date language and "
-        f"no course-specific token from {tokens!r}). Answer: {answer!r}"
+    assert lab_or_date and (due_language or course_ref), (
+        "Answer does not look grounded in the course (expected Lab 4 or a 2026 "
+        "date, plus due-date language or a course-specific token from "
+        f"{tokens!r}). Answer: {answer!r}"
     )
 
 

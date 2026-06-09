@@ -1,8 +1,8 @@
 # Course AI Assistant — Playwright E2E suite
 
 End-to-end tests for the Canvas **"Course AI Assistant"** feature: an instructor
-enables a per-course AI assistant, a tab appears in course navigation, and the
-assistant (embedded via an `<iframe>`) answers questions **grounded in that
+opens a per-course AI assistant tab in course navigation, and the assistant
+(embedded via an `<iframe>`) answers questions **grounded in that
 course's published content** while declining out-of-scope questions.
 
 The agent itself is the grounded, FERPA-safe class-agent in
@@ -13,8 +13,7 @@ tests drive the **browser UI**, not the SQL views directly.
 
 1. Instructor logs into Canvas.
 2. Opens a course.
-3. Enables the "Course AI Assistant" (course feature flag / nav item).
-4. The "Course AI Assistant" tab appears in course navigation.
+3. Confirms the "Course AI Assistant" tab appears in course navigation.
 5. Opens the tab (assistant embedded in an iframe → tests use `frame_locator`).
 6. Asks **"what is due this week?"** → asserts a grounded, non-empty,
    course-specific answer.
@@ -26,7 +25,7 @@ tests drive the **browser UI**, not the SQL views directly.
 | File | Purpose |
 |------|---------|
 | `test_course_ai_assistant.py` | The spec. One ordered story test (`test_full_course_ai_assistant_journey`) + granular `test_step_*` tests. |
-| `helpers.py` | Intent-named page-driving helpers: `login`, `open_course`, `enable_course_ai_assistant`, `course_nav_tab`, `assistant_frame`, `ask_assistant`. All live-DOM dependencies are `# TODO(selector)` marked. |
+| `helpers.py` | Intent-named page-driving helpers: `login`, `open_course`, `enable_course_ai_assistant`, `course_nav_tab`, `assistant_frame`, `ask_assistant`, using confirmed live selectors. |
 | `conftest.py` | Pytest fixtures: `browser` (global Chromium), `context` (tracing + video + cert tolerance), `page`, `instructor_page` (pre-logged-in). |
 | `config.py` | All env-var parameterization with defaults. Run `python3 config.py` to print the resolved config. |
 | `pytest.ini` | Marker registration + defaults; keeps the dir self-contained. |
@@ -101,26 +100,16 @@ Each run appends one tab-separated line to `reports/e2e_report.log`:
 
 Cron alternative: see `systemd/crontab.example`.
 
-## Confirming selectors against the live UI
+## Confirmed selectors
 
-Canvas DOM specifics (login form ids, the feature-flag toggle, the nav tab, the
-assistant iframe, the chat input/answer bubbles) are **not observable until
-Canvas is up**, so they are marked `# TODO(selector)` in `helpers.py`. Each one
-ships with several candidate locators tried in order, so confirming a selector
-usually means *deleting the wrong candidates*, not rewriting a function.
-
-Fastest way to confirm them is Playwright codegen against the running UI:
-```bash
-DISPLAY=:0 ~/.local/bin/playwright codegen http://canvas.docker
-```
-Walk the flow manually, copy the locators Playwright suggests, and trim the
-candidate lists in `helpers.py`. The key spots:
-
-- `helpers.login` — `#pseudonym_session_unique_id`, `#pseudonym_session_password`, "Log In" button.
-- `helpers.enable_course_ai_assistant` — Feature Options tab + the feature toggle, **or** the Navigation tab item. Keep whichever mechanism the fork actually uses.
-- `helpers.course_nav_tab` — `#section-tabs a:has-text('Course AI Assistant')`.
-- `helpers.assistant_frame` — the iframe selector (LTI `#tool_content` vs. an app iframe).
-- `helpers._ANSWER_SELECTOR` and the input candidates in `ask_assistant` — the chat box and answer bubble.
+- `helpers.login` — `#pseudonym_session_unique_id`,
+  `#pseudonym_session_password`, and
+  `#login_form input[type='submit'][value='Log In']`.
+- `helpers.course_nav_tab` — `#section-tabs a#course-ai-assistant-link`.
+- `helpers.assistant_frame` —
+  `iframe[src*='localhost:8742'][title='Course AI Assistant']`.
+- `helpers.ask_assistant` — input `#cq`, send `#cform button`, answer
+  bubble `.msg.bot`.
 
 ## Artifacts & debugging
 
