@@ -3490,6 +3490,7 @@ class Course < ApplicationRecord
   TAB_ITEM_BANKS = 23
   TAB_YOUTUBE_MIGRATION = 24
   TAB_AI_EXPERIENCES = 25
+  TAB_AI_ASSISTANT = 26
 
   CANVAS_K6_TAB_IDS = [TAB_HOME, TAB_ANNOUNCEMENTS, TAB_GRADES, TAB_MODULES].freeze
   COURSE_SUBJECT_TAB_IDS = [TAB_HOME, TAB_SCHEDULE, TAB_MODULES, TAB_GRADES, TAB_GROUPS].freeze
@@ -3730,6 +3731,19 @@ class Course < ApplicationRecord
                           })
     end
 
+    # Add Course AI Assistant tab before Settings if feature flag is enabled.
+    # One-button, course-agnostic AI assistant grounded in the course's published content.
+    if feature_enabled?(:course_ai_assistant)
+      settings_index = default_tabs.index { |t| t[:id] == TAB_SETTINGS }
+      settings_index ||= default_tabs.length
+      default_tabs.insert(settings_index, {
+                            id: TAB_AI_ASSISTANT,
+                            label: t("#tabs.course_ai_assistant", "Course AI Assistant"),
+                            css_class: "course_ai_assistant",
+                            href: :course_ai_assistant_path
+                          })
+    end
+
     # Remove already cached tabs for Horizon courses
     if horizon_course?
       default_tabs.delete_if do |tab|
@@ -3795,6 +3809,13 @@ class Course < ApplicationRecord
         settings_index = tabs.index { |t| t[:id] == TAB_SETTINGS }
         settings_index ||= tabs.length
         tabs.insert(settings_index, default_tabs.delete(ai_experiences_tab))
+      end
+
+      course_ai_assistant_tab = default_tabs.detect { |t| t[:id] == TAB_AI_ASSISTANT }
+      if course_ai_assistant_tab && !tabs.empty?
+        settings_index = tabs.index { |t| t[:id] == TAB_SETTINGS }
+        settings_index ||= tabs.length
+        tabs.insert(settings_index, default_tabs.delete(course_ai_assistant_tab))
       end
 
       tabs += default_tabs

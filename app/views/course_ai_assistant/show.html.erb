@@ -1,0 +1,12 @@
+<% provide :page_title, @page_title %>
+<style>
+  #course-ai-assistant-wrap { height: calc(100vh - 220px); min-height: 560px; }
+  #course-ai-assistant-wrap iframe { width: 100%; height: 100%; border: 1px solid #c7cdd1; border-radius: 8px; }
+</style>
+<div id="course-ai-assistant-wrap">
+  <iframe
+    src="<%= "#{@agent_base_url}/?course_id=#{@context.id}" %>"
+    title="<%= t("Course AI Assistant") %>"
+    allow="clipboard-write"
+    referrerpolicy="no-referrer"></iframe>
+</div>

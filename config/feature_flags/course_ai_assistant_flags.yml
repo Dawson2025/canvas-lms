@@ -1,0 +1,12 @@
+---
+course_ai_assistant:
+  state: hidden
+  applies_to: Course
+  display_name: Course AI Assistant
+  description: One-button AI assistant for a course, grounded in the course's published content via the ai_course_* views.
+  touch_context: true
+  environments:
+    ci:
+      state: allowed_on
+    development:
+      state: allowed_on

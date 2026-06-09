@@ -592,6 +592,8 @@ CanvasRails::Application.routes.draw do
 
     resources :accessibility_issues, only: [:update]
 
+    get "ai_assistant" => "course_ai_assistant#show", :as => :ai_assistant
+
     resources :ai_experiences, only: %i[index create new show edit update destroy] do
       get "ai_conversations", to: "ai_conversations#index", as: :ai_conversations
     end
@@ -1288,6 +1290,10 @@ CanvasRails::Application.routes.draw do
       get "courses/:course_id/permissions", action: :permissions
 
       get "courses/:course_id/student_view_student", action: :student_view_student
+    end
+
+    scope(controller: :course_ai_assistant) do
+      get "courses/:course_id/ai_assistant", action: :show, as: "course_ai_assistant"
     end
 
     scope(controller: :ai_experiences) do
