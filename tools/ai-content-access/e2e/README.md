@@ -134,6 +134,36 @@ Cron alternative: see `systemd/crontab.example`.
 These bars are deliberately robust to LLM phrasing variance — they reject
 non-answers and scope violations without pinning exact wording.
 
+## Interactive AI-driven demo (`interactive_demo.sh` / `interactive_demo.py`)
+
+Two phases in one headed browser, narrated by voice:
+
+1. **Scripted showcase** — logs in and walks CSE 290R + AI Society, asking a
+   fixed sequence (what's it about / what's due / an out-of-scope decline /
+   attendance policy).
+2. **Interactive** — you TYPE or SPEAK a free-form request and an LLM "demo
+   director" (OpenRouter) turns it into live product actions:
+   - `ask_assistant` — types your question into the product's assistant and
+     shows its grounded answer
+   - `show_page` — opens a real Canvas page (syllabus / assignments / modules /
+     announcements) so you see the content it's grounded in
+   - `goto_course` — switches courses, proving it's course-agnostic
+
+Run it:
+
+```bash
+./interactive_demo.sh                 # scripted intro, then TYPE requests here
+./interactive_demo.sh --voice         # SPEAK requests (ai-audio voicemode listen)
+./interactive_demo.sh --no-script     # skip the intro, straight to interactive
+./interactive_demo.sh --quiet         # text only, no TTS narration
+```
+
+Requires Canvas up at `$BASE_URL`, the agent on `$AGENT_BASE` (`:8742`), a
+`DISPLAY` for the headed window, and `~/.config/secrets/openrouter.env` for the
+director (it falls back to a deterministic keyword router when offline). The
+browser is left OPEN at the end for hands-on use; shared driving logic lives in
+`demo_lib.py`.
+
 ## Scope / safety
 
 This suite lives entirely under `e2e/` and **does not modify any Canvas Rails
