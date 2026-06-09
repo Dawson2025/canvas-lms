@@ -138,9 +138,11 @@ helper for students in this course.
 Rules:
 - Answer ONLY from the COURSE CONTENT below. It is the published, FERPA-safe \
 course material (syllabus, pages, modules, assignments, announcements).
-- If the answer isn't in the course content, say so plainly — do NOT invent \
-policies, dates, or assignments. If asked about unpublished/hidden material, \
-explain you can only see published content.
+- Before answering, verify that the COURSE CONTENT contains the needed fact. \
+If it does not, say "I don't see that in the published course content." Do NOT \
+invent policies, dates, assignments, requirements, links, or facts.
+- If asked about unpublished/hidden material, explain you can only see \
+published content.
 - SCOPE GUARD: You ONLY cover THIS course's published content. If a question is \
 clearly outside this course — general knowledge (sports, news, trivia), other \
 courses, current events, or a specific student's private grades/records — \
@@ -222,12 +224,18 @@ def _call_llm(system, user):
 def answer(question, course_id):
     # HARD scope guard runs before any LLM call: clearly off-course questions are
     # declined deterministically (defense-in-depth alongside the SYS_PROMPT rule).
-    if _out_of_scope((question or "").lower().strip(), course_id):
+    qn = (question or "").lower().strip()
+    if _out_of_scope(qn, course_id):
         m = row1(f"SELECT course_code, course_name FROM ai_course_manifest WHERE course_id={cid(course_id)}")
         nm = f"{m['course_code']} — {m['course_name']}" if m else "this course"
         return _ans(f"I can only help with {nm}'s published content (syllabus, modules, "
                     "assignments, pages, and announcements). That question is outside this "
                     "course, so I can't answer it.", ["scope guard"])
+    if _due_window_intent(qn):
+        try:
+            return _due_next_7_days(course_id)
+        except Exception:
+            pass
     try:
         return llm_answer(question, course_id)
     except Exception as e:
@@ -312,6 +320,32 @@ def _rule_answer(question, course_id):
 
 _STOP = {"the", "what", "whats", "where", "when", "how", "for", "and", "can", "is", "are",
          "does", "this", "that", "find", "show", "tell", "about", "course", "class", "with", "you"}
+
+
+def _due_window_intent(qn):
+    """Questions that should use the deterministic upcoming 7-day SQL window."""
+    if "due next week" in qn or "due this week" in qn or "what's due" in qn or "whats due" in qn:
+        return True
+    if "upcoming" in qn and any(w in qn for w in ("due", "assignment", "deadline", "work")):
+        return True
+    if re.search(r"\bwhat do i have due\b", qn):
+        return True
+    if re.search(r"\b(is there anything|anything|what|which).*\bdue\b", qn):
+        return True
+    return False
+
+
+def _due_next_7_days(course_id):
+    c = cid(course_id)
+    rows = rows_json(
+        f"SELECT title, to_char(due_at,'FMDay, FMMonth FMDD, YYYY') AS d "
+        f"FROM ai_course_assignments WHERE course_id={c} "
+        f"AND due_at BETWEEN now() AND now() + interval '7 days' ORDER BY due_at")
+    if not rows:
+        return _ans("Nothing is due in the next 7 days.", ["ai_course_assignments"])
+    return _ans("Due in the next 7 days:\n"
+                + "\n".join(f"- {r['title']} — due {r['d']}" for r in rows),
+                ["ai_course_assignments"])
 
 # Strong signals that a question is NOT about this course's published content.
 # Conservative on purpose: only decline on clear off-course markers so we never
@@ -403,6 +437,9 @@ padding:12px 4px;width:100%}
 #cnav a.ai{color:#0a7c3e}#cnav a.ai.on{color:#0a7c3e;border-left-color:#0a7c3e}
 /* content */
 #content{flex:1;display:flex;flex-direction:column;overflow:hidden}
+body.embed #grail,body.embed #cnav,body.embed #bar{display:none}
+body.embed #page{padding:18px 22px}
+body.embed #chat{max-width:none}
 #bar{height:48px;border-bottom:1px solid #e6e9ec;display:flex;align-items:center;gap:14px;
 padding:0 22px;flex-shrink:0;background:#fff}
 #bar .crumb{color:#6b7780;font-size:13px;flex:1}
@@ -468,24 +505,32 @@ border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-rig
 </div>
 <div id="ov"><div class="box"><h3>Provisioning AI Assistant…</h3><div id="ovsteps"></div></div></div>
 <script>
-const S={courses:[],cur:null,role:'instructor',nav:'home',state:{}};
+const Q=new URLSearchParams(window.location.search);
+const COURSE_ID=Q.get('course_id');
+const EMBED=Q.get('embed')==='1';
+const S={courses:[],cur:null,role:'instructor',nav:'home',state:{},scoped:!!COURSE_ID,embed:EMBED};
 const $=id=>document.getElementById(id);
 function esc(t){return (t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');}
 function md(t){return esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');}
 
 async function boot(){
+  if(EMBED) document.body.classList.add('embed');
   S.courses=await (await fetch('/courses')).json();
   const sel=$('csel');
   S.courses.forEach(c=>sel.insertAdjacentHTML('beforeend',
     `<option value="${c.course_id}">${c.course_code} — ${c.course_name}</option>`));
+  let def=COURSE_ID?S.courses.find(c=>c.course_id==COURSE_ID):null;
   // default to AI Society (415990) if present, else first
-  const def=S.courses.find(c=>c.course_id==415990)||S.courses[0];
-  sel.value=def.course_id; await switchCourse(def.course_id);
+  if(!def) def=S.courses.find(c=>c.course_id==415990)||S.courses[0];
+  if(!def) return;
+  sel.value=def.course_id;
+  if(S.scoped) sel.style.display='none';
+  await switchCourse(def.course_id, S.scoped?'assistant':'home');
 }
-async function switchCourse(id){
+async function switchCourse(id, nav){
   S.cur=S.courses.find(c=>c.course_id==id);
   S.state=await (await fetch('/state?course_id='+id)).json();
-  S.nav='home'; render();
+  S.nav=nav||'home'; render();
 }
 function setRole(r){S.role=r;$('rIns').className=r=='instructor'?'on':'';
   $('rStu').className=r=='student'?'on':'';
@@ -494,6 +539,7 @@ function go(n){S.nav=n;render();}
 
 function render(){
   const c=S.cur, st=S.state;
+  if(!c) return;
   $('cnavttl').textContent=c.course_code;
   // course nav
   const items=[['home','Home'],['announcements','Announcements'],['grades','Grades'],
