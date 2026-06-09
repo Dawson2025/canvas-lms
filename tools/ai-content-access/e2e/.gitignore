@@ -1,0 +1,6 @@
+# E2E run artifacts — regenerable, not source.
+artifacts/
+reports/
+__pycache__/
+*.pyc
+.pytest_cache/

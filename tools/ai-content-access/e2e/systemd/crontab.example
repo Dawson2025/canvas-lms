@@ -1,0 +1,12 @@
+# Cron alternative to the systemd timer for the Course AI Assistant E2E suite.
+# Install with:   crontab -e   (then paste a line below)
+# View log with:  tail -f ~/dawson-workspace/code/canvas-lms/tools/ai-content-access/e2e/reports/e2e_report.log
+#
+# run_e2e.sh already appends a timestamped PASS/FAIL line to the report log, so
+# cron only needs to invoke it. We redirect stdout/stderr to a rolling cron log.
+#
+# Hourly at :17 (off the :00 stampede):
+17 * * * * BASE_URL=http://canvas.docker ADMIN_EMAIL=admin@canvas.docker ADMIN_PASSWORD=canvasdev123 /home/dawson/dawson-workspace/code/canvas-lms/tools/ai-content-access/e2e/run_e2e.sh >> /home/dawson/dawson-workspace/code/canvas-lms/tools/ai-content-access/e2e/reports/cron.out 2>&1
+#
+# Once a day at 06:23 instead (comment out the hourly line above if you use this):
+# 23 6 * * * BASE_URL=http://canvas.docker ADMIN_EMAIL=admin@canvas.docker ADMIN_PASSWORD=canvasdev123 /home/dawson/dawson-workspace/code/canvas-lms/tools/ai-content-access/e2e/run_e2e.sh >> /home/dawson/dawson-workspace/code/canvas-lms/tools/ai-content-access/e2e/reports/cron.out 2>&1

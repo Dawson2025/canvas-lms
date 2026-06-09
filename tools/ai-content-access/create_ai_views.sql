@@ -84,12 +84,11 @@ SELECT
   wp.title,
   wp.url,
   strip_html_tags(wp.body) AS body_clean,
-  w.context_id AS course_id,
+  wp.context_id AS course_id,
   wp.updated_at
 FROM wiki_pages wp
-JOIN wikis w ON wp.wiki_id = w.id
 WHERE wp.workflow_state = 'active'
-  AND w.context_type = 'Course';
+  AND wp.context_type = 'Course';
 
 -- Module structure with items resolved
 CREATE OR REPLACE VIEW ai_course_modules AS
@@ -174,7 +173,7 @@ SELECT
   c.course_code,
   (SELECT count(*) FROM context_modules WHERE context_id = c.id AND workflow_state = 'active') AS module_count,
   (SELECT count(*) FROM assignments WHERE context_id = c.id AND workflow_state = 'published') AS assignment_count,
-  (SELECT count(*) FROM wiki_pages wp JOIN wikis w ON wp.wiki_id = w.id WHERE w.context_id = c.id AND wp.workflow_state = 'active') AS page_count,
+  (SELECT count(*) FROM wiki_pages wp WHERE wp.context_id = c.id AND wp.context_type = 'Course' AND wp.workflow_state = 'active') AS page_count,
   (SELECT count(*) FROM discussion_topics WHERE context_id = c.id AND type = 'Announcement' AND workflow_state = 'active') AS announcement_count,
   (SELECT count(*) FROM attachments WHERE context_id = c.id AND file_state = 'available') AS file_count
 FROM courses c

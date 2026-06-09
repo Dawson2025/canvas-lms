@@ -1,0 +1,27 @@
+[Unit]
+Description=Course AI Assistant E2E suite (headless run, appends PASS/FAIL to report log)
+Documentation=file:%h/dawson-workspace/code/canvas-lms/tools/ai-content-access/e2e/README.md
+# Only run if the network is up; the run script also preflights BASE_URL.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Headless CI-style run.
+Environment=E2E_HEADLESS=1
+# --- connection (override here or via a drop-in / EnvironmentFile) ----------
+Environment=BASE_URL=http://canvas.docker
+Environment=ADMIN_EMAIL=admin@canvas.docker
+Environment=ADMIN_PASSWORD=canvasdev123
+# Make the global playwright at ~/.local/bin importable/visible.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/dawson-workspace/code/canvas-lms/tools/ai-content-access/e2e
+ExecStart=%h/dawson-workspace/code/canvas-lms/tools/ai-content-access/e2e/run_e2e.sh
+# Don't let a long LLM round-trip wedge the unit forever.
+TimeoutStartSec=900
+# A failing E2E run is "expected operation", not a unit crash — the report log
+# captures PASS/FAIL. Keep journal noise low.
+SuccessExitStatus=0 1
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Run the Course AI Assistant E2E suite on a schedule
+Documentation=file:%h/dawson-workspace/code/canvas-lms/tools/ai-content-access/e2e/README.md
+
+[Timer]
+# Run hourly at :17 (off the :00 stampede), plus ~5 min after boot.
+OnCalendar=*-*-* *:17:00
+OnBootSec=5min
+# If the machine was asleep at the scheduled time, run as soon as it wakes.
+Persistent=true
+# Spread load if multiple timers fire together.
+RandomizedDelaySec=120
+Unit=canvas-ai-e2e.service
+
+[Install]
+WantedBy=timers.target
