@@ -161,8 +161,19 @@ def assistant_frame(page: Page) -> FrameLocator:
     The tab content is rendered by the agent server inside an <iframe>.
     """
     sel = "iframe[src*='localhost:8742'][title='Course AI Assistant']"
-    page.locator(sel).wait_for(state="attached", timeout=config.NAV_TIMEOUT_MS)
+    iframe = page.locator(sel)
+    iframe.wait_for(state="attached", timeout=config.NAV_TIMEOUT_MS)
+    iframe.wait_for(state="visible", timeout=config.NAV_TIMEOUT_MS)
     return page.frame_locator(sel)
+
+
+def assistant_question_box(page: Page) -> Locator:
+    """Return the ready-to-type assistant question input inside the iframe."""
+    frame = assistant_frame(page)
+    box = frame.locator("#cq")
+    box.wait_for(state="visible", timeout=config.NAV_TIMEOUT_MS)
+    expect(box).to_be_enabled(timeout=config.NAV_TIMEOUT_MS)
+    return box
 
 
 def ask_assistant(page: Page, question: str) -> str:
@@ -171,9 +182,7 @@ def ask_assistant(page: Page, question: str) -> str:
     All locators are scoped to the iframe via ``assistant_frame``.
     """
     frame = assistant_frame(page)
-
-    box = frame.locator("#cq")
-    box.wait_for(state="visible", timeout=config.TIMEOUT_MS)
+    box = assistant_question_box(page)
     box.click()
     box.fill(question)
 
@@ -182,7 +191,10 @@ def ask_assistant(page: Page, question: str) -> str:
     answer_sel = _ANSWER_SELECTOR
     before = _safe_count(frame.locator(answer_sel))
 
-    frame.locator("#cform button").click(timeout=config.TIMEOUT_MS)
+    button = frame.locator("#cform button")
+    button.click(timeout=config.TIMEOUT_MS)
+    if not _answer_count_increased(frame, answer_sel, before, timeout_ms=1500):
+        box.press("Enter", timeout=config.TIMEOUT_MS)
 
     # Wait for a new answer bubble to appear and stop changing (LLM stream).
     return _wait_for_answer(frame, answer_sel, before)
@@ -197,6 +209,18 @@ def _safe_count(loc: Locator) -> int:
         return loc.count()
     except Exception:
         return 0
+
+
+def _answer_count_increased(
+    frame: FrameLocator, answer_sel: str, before_count: int, timeout_ms: int
+) -> bool:
+    """Briefly check whether one send path already produced a new answer node."""
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while time.monotonic() < deadline:
+        if _safe_count(frame.locator(answer_sel)) > before_count:
+            return True
+        time.sleep(0.1)
+    return False
 
 
 def _wait_for_answer(frame: FrameLocator, answer_sel: str, before_count: int) -> str:

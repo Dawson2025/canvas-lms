@@ -17,7 +17,7 @@ Optional knobs (all have safe defaults):
     E2E_SLOW_MO         ms of slow_mo between actions (default 0; demo uses 250).
     E2E_TIMEOUT_MS      per-action timeout in ms (default 30000).
     E2E_NAV_TIMEOUT_MS  per-navigation timeout in ms (default 45000).
-    E2E_ANSWER_TIMEOUT_MS  how long to wait for an agent answer (default 60000;
+    E2E_ANSWER_TIMEOUT_MS  how long to wait for an agent answer (default 90000;
                         LLM round-trips can be slow).
     E2E_FEATURE_TAB_NAME   the exact label of the course-nav tab to look for
                         (default "Course AI Assistant").
@@ -64,7 +64,7 @@ HEADLESS: bool = _env_bool("E2E_HEADLESS", True)
 SLOW_MO: int = _env_int("E2E_SLOW_MO", 0)
 TIMEOUT_MS: int = _env_int("E2E_TIMEOUT_MS", 30_000)
 NAV_TIMEOUT_MS: int = _env_int("E2E_NAV_TIMEOUT_MS", 45_000)
-ANSWER_TIMEOUT_MS: int = _env_int("E2E_ANSWER_TIMEOUT_MS", 60_000)
+ANSWER_TIMEOUT_MS: int = _env_int("E2E_ANSWER_TIMEOUT_MS", 90_000)
 
 # --- artifacts ---------------------------------------------------------------
 ARTIFACT_DIR: Path = Path(

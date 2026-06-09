@@ -129,8 +129,9 @@ def test_full_course_ai_assistant_journey(instructor_page: Page) -> None:
     # 5. open the tab (assistant is embedded in an iframe)
     helpers.open_assistant_tab(page, course_id, config.FEATURE_TAB_NAME)
     frame = helpers.assistant_frame(page)
-    # the iframe should have a visible body / input
+    # the iframe should have a visible body / ready input
     expect(frame.locator("body")).to_be_visible()
+    expect(helpers.assistant_question_box(page)).to_be_visible()
 
     # 6. ask an in-scope question -> grounded, non-empty, course-specific answer
     in_scope_answer = helpers.ask_assistant(page, IN_SCOPE_QUESTION)
@@ -185,6 +186,7 @@ def test_step_5_assistant_tab_embeds_iframe(instructor_page: Page) -> None:
     helpers.open_assistant_tab(page, course_id, config.FEATURE_TAB_NAME)
     frame = helpers.assistant_frame(page)
     expect(frame.locator("body")).to_be_visible()
+    expect(helpers.assistant_question_box(page)).to_be_visible()
 
 
 @pytest.mark.e2e
