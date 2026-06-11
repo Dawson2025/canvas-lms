@@ -25,6 +25,7 @@ SCRIPTED, SLOW_MO, PAUSE, DIRECTOR_MODEL_ID, CLOSE_ON_EXIT, KEEP_OPEN_SECONDS.
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 
@@ -97,12 +98,13 @@ def run_scripted(page) -> int:
     return current
 
 
-def read_request() -> str:
+def read_request(first: bool = False) -> str:
     """Get the next request — spoken (VOICE_IN) or typed. '' means skip/retry."""
     if VOICE_IN:
-        print(f"\n{D.M}🎤 Speak your request (say 'quit' to finish)…{D.R}", flush=True)
-        D.speak("What would you like me to show you?")
-        return D.listen_voice(timeout=40)
+        print(f"\n{D.M}🎤 Listening (say 'quit' to finish)…{D.R}", flush=True)
+        if first:
+            D.speak("I'm listening. Ask me anything, or tell me what to show you.")
+        return D.listen_voice(timeout=45)
     try:
         return input(f"\n{D.M}You ▸ {D.R}").strip()
     except (EOFError, KeyboardInterrupt):
@@ -110,17 +112,22 @@ def read_request() -> str:
 
 
 def interactive_loop(page, courses, current_course_id: int) -> None:
-    banner("INTERACTIVE DEMO — ask the assistant anything, or ask me to SHOW you "
-           "things in the product. Type 'help' for examples, 'quit' to finish.")
-    D.speak("Now it is your turn. You can ask the assistant a question, or ask me "
-            "to show you something in the product, and I will do it live.")
+    banner("INTERACTIVE DEMO — a conversation with the presenter. Ask it about "
+           "the product, ask the course assistant questions, or ask it to SHOW "
+           "you things — it demos in real time. 'help' for examples, 'quit' to end.")
+    D.speak("Now it is your turn. Talk to me like you would a presenter. You can "
+            "ask me how this works, ask the course assistant questions, or tell "
+            "me to show you something, and I will demo it live.")
     print(f"{D.Y}Try:{D.R}")
     for ex in EXAMPLES:
         print(f"  • {ex}")
 
     current = current_course_id
+    history: list[dict] = []
+    first = True
     while True:
-        req = read_request()
+        req = read_request(first=first)
+        first = False
         if not req:
             continue
         low = req.lower().strip(" .!?")
@@ -132,11 +139,15 @@ def interactive_loop(page, courses, current_course_id: int) -> None:
                 print(f"  • {ex}")
             continue
         print(f"{D.C}↳ directing: {req}{D.R}", flush=True)
-        plan = D.director_plan(req, courses, current)
+        plan = D.director_plan(req, courses, current, history=history)
         if plan.get("narration"):
             D.speak(plan["narration"])
         for action in plan.get("actions", []):
             current = D.run_action(page, action, current)
+        # Remember the exchange so vague follow-ups ("do that", "how?") resolve.
+        history.append({"role": "user", "content": req})
+        history.append({"role": "assistant", "content": json.dumps(plan)})
+        del history[:-16]  # keep the conversation tail bounded
 
 
 def main() -> None:

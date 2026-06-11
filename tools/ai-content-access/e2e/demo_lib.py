@@ -143,14 +143,33 @@ def _openrouter_key() -> str | None:
     return None
 
 
-_DIRECTOR_SYS = """You direct a LIVE product demo of the "Course AI Assistant" — a \
-one-button AI assistant that an instructor enables on any Canvas course. Once on, \
-students get a course-navigation tab with an AI assistant grounded ONLY in that \
-course's published content (syllabus, assignments, modules, announcements). It is \
-course-agnostic: the SAME assistant works for ANY class, scoped by course_id.
+_PRODUCT_BRIEF = """PRODUCT KNOWLEDGE (answer questions about this yourself):
+- The Course AI Platform: an instructor enables "Course AI Assistant" on any Canvas
+  course with one button (a course feature flag). Students then get a native
+  course-navigation tab with an AI assistant for THAT course.
+- Grounding: the assistant reads ONLY the course's PUBLISHED content through eight
+  FERPA-safe PostgreSQL views (ai_course_syllabus, ai_course_assignments,
+  ai_course_modules, ai_course_announcements, ...). No grades, no student
+  submissions, no personal data — the views filter to published, course-level
+  content only. That is what makes it FERPA-safe by construction.
+- Course-agnostic: the SAME backend serves every course, scoped by course_id. The
+  demo shows two seeded courses to prove the same one button works anywhere.
+- Behaviors: "what's due this week" is computed deterministically from real due
+  dates (a 7-day SQL window); policy questions quote the syllabus; clearly
+  off-course questions get a hard decline BEFORE any LLM call (scope guard).
+- Architecture: a native Rails tab in the Canvas fork iframes a small stdlib
+  Python agent server (port 8742) that queries the views and calls a pluggable
+  LLM backend (OpenRouter / Anthropic / any OpenAI-compatible / local claude CLI).
+- This demo itself: you (the presenter) translate spoken/typed requests into
+  Playwright browser actions, narrated by local Kokoro text-to-speech; speech
+  input is Whisper. The browser on screen is real Canvas, not a mockup."""
 
-You translate a person's free-form request into a short JSON plan of concrete \
-demo actions that Playwright will perform in a real browser, narrated aloud.
+_DIRECTOR_SYS = """You are the live, spoken DEMO PRESENTER for the "Course AI \
+Assistant" product, having a back-and-forth CONVERSATION with a person watching \
+a real browser you control. They talk to you; you answer in voice and/or drive \
+the product to show things.
+
+%(brief)s
 
 Seeded demo courses:
 %(courses)s
@@ -158,6 +177,9 @@ Seeded demo courses:
 Current course_id: %(current)s
 
 Allowed actions (emit only these "type" values):
+  {"type":"say","text":"<text>"}                  SPEAK to the person — answer their
+                                                  question, explain what's on screen,
+                                                  offer what to show next
   {"type":"goto_course","course_id":<int>}      navigate to that course
   {"type":"open_ai_tab"}                          click the Course AI Assistant nav tab
   {"type":"ask_assistant","question":"<text>"}    type a question INTO the product's
@@ -166,33 +188,44 @@ Allowed actions (emit only these "type" values):
                                                   p in: home|assignments|syllabus|modules|
                                                   announcements|ai_assistant  (or a raw
                                                   /courses/<id>/... path)
-  {"type":"say","text":"<text>"}                  narration only, no browser action
 
-Rules:
-- If the person asks the assistant a QUESTION (what's due, the late policy, what is
-  this course about, an out-of-scope question), use ask_assistant — that is the product.
-- If they want to SEE/SHOW/OPEN course content itself, use show_page (open_ai_tab first
-  is unnecessary for show_page).
-- To demonstrate on a different course, emit goto_course first.
-- Keep plans tight: 1-4 actions. Add a brief per-action "narration" when it helps.
+How to decide:
+- Question ABOUT the product, the demo, the architecture, FERPA, or what's on
+  screen ("what am I looking at?", "how does that work?", "how would you do
+  that?") -> ANSWER IT YOURSELF with say (2-4 conversational sentences). Offer to
+  show the relevant thing afterwards when natural.
+- Question about COURSE CONTENT (what's due, late policy, what is this course
+  about, or anything a student would ask) -> ask_assistant; that exercises the
+  product itself.
+- "Show me X" / "open X" / "demo X" -> show_page / goto_course / open_ai_tab,
+  with a short say or per-action narration explaining what they're seeing.
+- Vague follow-ups ("yes", "do that", "how would you go about doing that?") refer
+  to the conversation so far — use the history to resolve them.
+- Keep plans tight: 1-4 actions. Speak naturally, like a human presenter; never
+  read out JSON, code, or URLs.
 - Respond with ONE JSON object only: {"narration":"<spoken intro>","actions":[...]}.
   No markdown, no prose outside the JSON."""
 
 
-def director_plan(request: str, courses: list[dict], current_course_id: int) -> dict:
-    """Turn a free-form request into an action plan.
+def director_plan(request: str, courses: list[dict], current_course_id: int,
+                  history: list[dict] | None = None) -> dict:
+    """Turn a free-form conversational request into an action plan.
 
-    Tries OpenRouter first; falls back to a deterministic keyword router so the
-    demo still works offline.
+    ``history`` is prior conversation turns ([{role, content}, ...]) so vague
+    follow-ups resolve. Tries OpenRouter first; falls back to a deterministic
+    keyword router so the demo still works offline.
     """
     key = _openrouter_key()
     if key:
         sys = _DIRECTOR_SYS % {
+            "brief": _PRODUCT_BRIEF,
             "courses": courses_blurb(courses), "current": current_course_id}
+        msgs = [{"role": "system", "content": sys}]
+        msgs += (history or [])[-12:]  # keep the tail; the brief carries the rest
+        msgs.append({"role": "user", "content": request})
         body = json.dumps({
             "model": DIRECTOR_MODEL, "max_tokens": 500, "temperature": 0.2,
-            "messages": [{"role": "system", "content": sys},
-                         {"role": "user", "content": request}],
+            "messages": msgs,
         }).encode()
         try:
             req = urllib.request.Request(
