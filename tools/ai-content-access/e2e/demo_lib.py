@@ -77,12 +77,30 @@ def listen_voice(timeout: int = 30) -> str:
     """Capture one spoken utterance via ``ai-audio voicemode listen``.
 
     Returns the transcript, or "" on silence / hallucination / error.
+
+    The listener runs in its OWN process group and the whole group is killed on
+    timeout — ``ai-audio`` is a wrapper script, and killing only the wrapper
+    orphans the underlying voicemode python, which keeps the microphone open
+    forever (observed 2026-06-11: four orphaned listeners holding the mic).
+    ``--max`` additionally makes the capture self-terminate server-side.
     """
+    import os as _os
+    import signal as _signal
+    proc = None
     try:
-        out = subprocess.run(["ai-audio", "voicemode", "listen"],
-                             capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.Popen(
+            ["ai-audio", "voicemode", "listen", "--max", str(max(5, timeout - 5))],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            start_new_session=True)
+        out_text, _ = proc.communicate(timeout=timeout)
+        out = type("R", (), {"stdout": out_text})()
     except Exception as exc:
         print(f"(voice input failed: {exc})", flush=True)
+        if proc is not None:
+            try:  # kill the WHOLE group — wrapper AND the python holding the mic
+                _os.killpg(_os.getpgid(proc.pid), _signal.SIGKILL)
+            except Exception:
+                pass
         return ""
     # The CLI prints diagnostics on stderr and the transcript on stdout; take the
     # last non-empty stdout line to be safe.
