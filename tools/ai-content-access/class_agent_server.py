@@ -157,30 +157,44 @@ COURSE CONTENT:
 """
 
 
-def llm_answer(question, course_id):
+def _llm_label(model_override=None):
+    """Name the ACTIVE backend (mirrors _call_llm's env precedence)."""
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return "OpenRouter: " + (model_override or os.environ.get(
+            "AGENT_MODEL_ID", "meta-llama/llama-3.3-70b-instruct"))
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "Anthropic: " + (model_override or os.environ.get(
+            "AGENT_MODEL_ID", "claude-haiku-4-5-20251001"))
+    if os.environ.get("LLM_API_BASE"):
+        return model_override or os.environ.get("AGENT_MODEL_ID", "openai-compatible endpoint")
+    return "Claude CLI"
+
+
+def llm_answer(question, course_id, model=None):
     name = (row1(f"SELECT course_name FROM ai_course_manifest WHERE course_id = {cid(course_id)}")
             or {}).get("course_name", "this course")
     ctx = build_course_context(course_id)
     system = SYS_PROMPT % (name, ctx)
-    text = _call_llm(system, f"Student question: {question}")
+    text = _call_llm(system, f"Student question: {question}", model_override=model)
     if not text:
         raise RuntimeError("empty LLM response")
-    return {"answer": text, "sources": ["ai_course_* views (Claude)"]}
+    return {"answer": text, "sources": [f"ai_course_* views ({_llm_label(model)})"]}
 
 
-def _call_llm(system, user):
+def _call_llm(system, user, model_override=None):
     """Pluggable LLM backend, picked by env (stdlib only, no pip):
     1. OPENROUTER_API_KEY -> OpenRouter chat/completions (explicit branch)
     2. ANTHROPIC_API_KEY  -> Anthropic Messages API (works on a headless server)
     3. LLM_API_BASE+KEY   -> any OpenAI-compatible endpoint (Groq/...)
     4. otherwise          -> local `claude` CLI (Claude Code auth)
 
-    The API key is never logged.
+    ``model_override`` (from an /ask request) takes precedence over AGENT_MODEL_ID
+    within whichever backend is active. The API key is never logged.
     """
     import urllib.request
     ork = os.environ.get("OPENROUTER_API_KEY")
     if ork:
-        model = os.environ.get("AGENT_MODEL_ID", "meta-llama/llama-3.3-70b-instruct")
+        model = model_override or os.environ.get("AGENT_MODEL_ID", "meta-llama/llama-3.3-70b-instruct")
         body = json.dumps({"model": model, "max_tokens": 600, "messages": [
             {"role": "system", "content": system}, {"role": "user", "content": user}]}).encode()
         req = urllib.request.Request(
@@ -191,7 +205,7 @@ def _call_llm(system, user):
         return d["choices"][0]["message"]["content"].strip()
     ak = os.environ.get("ANTHROPIC_API_KEY")
     if ak:
-        model = os.environ.get("AGENT_MODEL_ID", "claude-haiku-4-5-20251001")
+        model = model_override or os.environ.get("AGENT_MODEL_ID", "claude-haiku-4-5-20251001")
         body = json.dumps({"model": model, "max_tokens": 600, "system": system,
                            "messages": [{"role": "user", "content": user}]}).encode()
         req = urllib.request.Request(
@@ -204,7 +218,7 @@ def _call_llm(system, user):
     base = os.environ.get("LLM_API_BASE")
     if base:
         key = os.environ.get("LLM_API_KEY", "")
-        model = os.environ.get("AGENT_MODEL_ID", "llama-3.1-8b-instant")
+        model = model_override or os.environ.get("AGENT_MODEL_ID", "llama-3.1-8b-instant")
         body = json.dumps({"model": model, "max_tokens": 600, "messages": [
             {"role": "system", "content": system}, {"role": "user", "content": user}]}).encode()
         req = urllib.request.Request(
@@ -221,7 +235,7 @@ def _call_llm(system, user):
     return (out.stdout or "").strip()
 
 
-def answer(question, course_id):
+def answer(question, course_id, model=None):
     # HARD scope guard runs before any LLM call: clearly off-course questions are
     # declined deterministically (defense-in-depth alongside the SYS_PROMPT rule).
     qn = (question or "").lower().strip()
@@ -237,7 +251,7 @@ def answer(question, course_id):
         except Exception:
             pass
     try:
-        return llm_answer(question, course_id)
+        return llm_answer(question, course_id, model=model)
     except Exception as e:
         r = _rule_answer(question, course_id)
         r["sources"] = r["sources"] + [f"(offline fallback: {type(e).__name__})"]
@@ -508,7 +522,8 @@ border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-rig
 const Q=new URLSearchParams(window.location.search);
 const COURSE_ID=Q.get('course_id');
 const EMBED=Q.get('embed')==='1';
-const S={courses:[],cur:null,role:'instructor',nav:'home',state:{},scoped:!!COURSE_ID,embed:EMBED};
+const MODEL=Q.get('model')||'';   // optional per-session LLM override (OpenRouter id)
+const S={courses:[],cur:null,role:'instructor',nav:'home',state:{},scoped:!!COURSE_ID,embed:EMBED,model:MODEL};
 const $=id=>document.getElementById(id);
 function esc(t){return (t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');}
 function md(t){return esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');}
@@ -619,7 +634,7 @@ async function enable(){
 let busy=false;
 function renderChat(p){
   const c=S.cur;
-  p.innerHTML=`<h1 class="pt">✨ Course AI Assistant</h1>
+  p.innerHTML=`<h1 class="pt">✨ Course AI Assistant${S.model?` <span style="font-size:12px;font-weight:normal;background:#eef4fb;border:1px solid #c5d8ef;border-radius:10px;padding:2px 8px;vertical-align:middle">model: ${esc(S.model)}</span>`:''}</h1>
     <div style="margin-bottom:10px">
       <span class="ex" onclick="cask('What is this course about?')">What is this course about?</span>
       <span class="ex" onclick="cask('How do I get involved?')">How do I get involved?</span>
@@ -645,7 +660,7 @@ async function cask(text){if(busy)return;busy=true;const q=$('cq');if(q)q.value=
   w.innerHTML='<i style="color:#8b969e">reading the course…</i>';
   $('clog').appendChild(w);$('clog').scrollTop=$('clog').scrollHeight;
   try{const r=await fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({q:text,course_id:S.cur.course_id})});const j=await r.json();
+    body:JSON.stringify({q:text,course_id:S.cur.course_id,...(S.model?{model:S.model}:{})})});const j=await r.json();
     w.remove();cadd('bot',j.answer,j.sources);}
   catch(e){w.remove();cadd('bot','(error reaching the agent)',[]);}
   busy=false;const qq=$('cq');if(qq)qq.focus();}
@@ -692,7 +707,8 @@ class Hdl(BaseHTTPRequestHandler):
         if u.path == "/ask":
             try:
                 return self._send(200, json.dumps(
-                    answer(data.get("q", ""), data.get("course_id"))))
+                    answer(data.get("q", ""), data.get("course_id"),
+                           model=(data.get("model") or None))))
             except Exception as e:
                 return self._send(200, json.dumps({"answer": f"(error: {e})", "sources": []}))
         return self._send(404, "{}")

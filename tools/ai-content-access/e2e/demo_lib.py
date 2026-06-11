@@ -90,6 +90,13 @@ def listen_voice(timeout: int = 30) -> str:
     text = lines[-1] if lines else ""
     if text.lower() in _STT_HALLUCINATIONS:
         return ""
+    # Drop pure filler ("And, um...", "uh") — strip filler words; if nothing of
+    # substance remains, treat as silence. Single real words ("quit") still pass.
+    words = re.findall(r"[a-z']+", text.lower())
+    if words and all(w in {"and", "um", "uh", "umm", "uhh", "so", "like",
+                           "okay", "ok", "well", "hmm", "er", "ah"} for w in words):
+        print(f"(filler ignored: {text!r})", flush=True)
+        return ""
     return text
 
 
@@ -164,6 +171,25 @@ _PRODUCT_BRIEF = """PRODUCT KNOWLEDGE (answer questions about this yourself):
   Playwright browser actions, narrated by local Kokoro text-to-speech; speech
   input is Whisper. The browser on screen is real Canvas, not a mockup."""
 
+
+def _runtime_brief() -> str:
+    """Describe the LIVE LLM configuration so the presenter never guesses it."""
+    agent_model = os.environ.get("AGENT_MODEL_ID", "meta-llama/llama-3.3-70b-instruct")
+    if os.environ.get("OPENROUTER_API_KEY"):
+        backend = f"OpenRouter (model: {agent_model})"
+    elif os.environ.get("ANTHROPIC_API_KEY"):
+        backend = f"Anthropic API (model: {os.environ.get('AGENT_MODEL_ID', 'claude-haiku-4-5')})"
+    elif os.environ.get("LLM_API_BASE"):
+        backend = f"an OpenAI-compatible endpoint (model: {agent_model})"
+    else:
+        backend = "the local claude CLI"
+    return (f"\nLIVE RUNTIME CONFIG (state this exactly when asked; do not guess):\n"
+            f"- The course assistant's LLM backend RIGHT NOW: {backend}.\n"
+            f"- You (the presenter) run on OpenRouter model {DIRECTOR_MODEL}.\n"
+            f"- Either can be swapped by env var (OPENROUTER_API_KEY / "
+            f"ANTHROPIC_API_KEY / LLM_API_BASE; model via AGENT_MODEL_ID) — "
+            f"no code change needed.")
+
 _DIRECTOR_SYS = """You are the live, spoken DEMO PRESENTER for the "Course AI \
 Assistant" product, having a back-and-forth CONVERSATION with a person watching \
 a real browser you control. They talk to you; you answer in voice and/or drive \
@@ -188,6 +214,16 @@ Allowed actions (emit only these "type" values):
                                                   p in: home|assignments|syllabus|modules|
                                                   announcements|ai_assistant  (or a raw
                                                   /courses/<id>/... path)
+  {"type":"set_model","model_id":"<id>"}          REALLY switch the assistant's LLM for
+                                                  this session. Valid ids ONLY:
+                                                  meta-llama/llama-3.3-70b-instruct (default),
+                                                  openai/gpt-4o-mini,
+                                                  anthropic/claude-haiku-4.5.
+                                                  The chat header badge and each answer's
+                                                  source line will show the active model —
+                                                  point the viewer at them as proof. Follow
+                                                  with ask_assistant so they see a real
+                                                  answer from the new model.
 
 How to decide:
 - Question ABOUT the product, the demo, the architecture, FERPA, or what's on
@@ -201,6 +237,11 @@ How to decide:
   with a short say or per-action narration explaining what they're seeing.
 - Vague follow-ups ("yes", "do that", "how would you go about doing that?") refer
   to the conversation so far — use the history to resolve them.
+- You can ONLY do the six actions above. Model switching IS real — but only via
+  set_model with the three listed ids. Anything else (restarting services, editing
+  config, opening pages outside Canvas) you CANNOT do: say so honestly and offer
+  something you CAN show instead. Never claim you are doing something you have no
+  action for.
 - Keep plans tight: 1-4 actions. Speak naturally, like a human presenter; never
   read out JSON, code, or URLs.
 - Respond with ONE JSON object only: {"narration":"<spoken intro>","actions":[...]}.
@@ -218,7 +259,7 @@ def director_plan(request: str, courses: list[dict], current_course_id: int,
     key = _openrouter_key()
     if key:
         sys = _DIRECTOR_SYS % {
-            "brief": _PRODUCT_BRIEF,
+            "brief": _PRODUCT_BRIEF + _runtime_brief(),
             "courses": courses_blurb(courses), "current": current_course_id}
         msgs = [{"role": "system", "content": sys}]
         msgs += (history or [])[-12:]  # keep the tail; the brief carries the rest
@@ -342,13 +383,65 @@ def show_page(page, course_id: int, which: str) -> None:
     page.wait_for_timeout(1200)
 
 
-def open_ai_tab(page, course_id: int):
-    """Click the native Course AI Assistant nav tab (fallback to direct URL)."""
+# Active per-session LLM override (OpenRouter model id); None = server default.
+CURRENT_MODEL: str | None = None
+
+# OpenRouter ids verified live against the key (2026-06-11). Keep small + valid.
+KNOWN_MODELS = {
+    "llama": "meta-llama/llama-3.3-70b-instruct",
+    "default": "meta-llama/llama-3.3-70b-instruct",
+    "gpt": "openai/gpt-4o-mini", "openai": "openai/gpt-4o-mini",
+    "claude": "anthropic/claude-haiku-4.5", "anthropic": "anthropic/claude-haiku-4.5",
+}
+
+
+def _open_tab_raw(page, course_id: int) -> None:
+    """Open the assistant tab (nav click, URL fallback) — no model handling."""
     try:
         page.click("#section-tabs a#course-ai-assistant-link", timeout=8000)
     except Exception:
         page.goto(f"{BASE}/courses/{course_id}/ai_assistant")
     page.wait_for_timeout(2000)
+    frame = page.frame_locator("iframe[title='Course AI Assistant']")
+    frame.locator("#cq").wait_for(state="visible", timeout=30000)
+
+
+def _swap_iframe_model(page, course_id: int) -> bool:
+    """Point the embedded SPA iframe at ?model=CURRENT_MODEL. True if iframe found."""
+    src = f"{AGENT_BASE}/?course_id={course_id}&embed=1"
+    if CURRENT_MODEL:
+        src += f"&model={CURRENT_MODEL}"
+    try:
+        return bool(page.evaluate(
+            "(src) => { const f = document.querySelector(\"iframe[title='Course AI Assistant']\");"
+            " if (!f) return false; f.src = src; return true; }", src))
+    except Exception:
+        return False
+
+
+def set_model(page, course_id: int, model_id: str | None) -> None:
+    """REALLY switch the assistant's LLM: reload the embedded SPA with ?model=.
+
+    The SPA forwards the model on every /ask; the server's _call_llm honors it,
+    and the chat header badge + per-answer source line show the active model.
+    """
+    global CURRENT_MODEL
+    m = (model_id or "").strip()
+    CURRENT_MODEL = KNOWN_MODELS.get(m.lower(), m) or None
+    if not _swap_iframe_model(page, course_id):   # tab not open yet
+        _open_tab_raw(page, course_id)
+        _swap_iframe_model(page, course_id)
+    page.wait_for_timeout(1500)
+    frame = page.frame_locator("iframe[title='Course AI Assistant']")
+    frame.locator("#cq").wait_for(state="visible", timeout=30000)
+
+
+def open_ai_tab(page, course_id: int):
+    """Click the native Course AI Assistant nav tab (fallback to direct URL)."""
+    _open_tab_raw(page, course_id)
+    if CURRENT_MODEL:  # keep the chosen model sticky across tab opens
+        _swap_iframe_model(page, course_id)
+        page.wait_for_timeout(1500)
     frame = page.frame_locator("iframe[title='Course AI Assistant']")
     frame.locator("#cq").wait_for(state="visible", timeout=30000)
     return frame
@@ -438,6 +531,14 @@ def run_action(page, action: dict, current_course_id: int) -> int:
         ans = ask_assistant(page, current_course_id, q)
         print(f"  {G}Assistant:{R} {ans}", flush=True)
         speak(note or _spoken_summary(ans))
+        page.wait_for_timeout(_ms(PAUSE))
+        return current_course_id
+    if t == "set_model":
+        mid = action.get("model_id") or action.get("model") or ""
+        if note:
+            speak(note)
+        set_model(page, current_course_id, mid)
+        print(f"  {G}model now:{R} {CURRENT_MODEL or '(server default)'}", flush=True)
         page.wait_for_timeout(_ms(PAUSE))
         return current_course_id
     if t == "say":
